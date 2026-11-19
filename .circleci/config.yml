@@ -1,0 +1,213 @@
+# SPDX-FileCopyrightText: 2026 takumu-dev
+# SPDX-License-Identifier: Zlib
+
+# Builds and tests Irama on every pull request into develop or main, on every merge into them, and
+# twice a week on develop, which catches drift in what the jobs download and keeps the caches from
+# expiring. Each Linux job runs one preset's workflow, and every job fans into `ci`, the one check
+# that branch protection requires, as the status `ci/circleci: ci`.
+#
+# Every Linux job runs in the image built from ci/linux/, which the `image` job builds and pushes
+# when its tag is missing.
+version: 2.1
+
+parameters:
+  # What ci/image-tag.sh prints. CircleCI needs a job's image before the job can run anything, so
+  # the tag is written here, and the image job fails when it is out of step with ci/linux/.
+  image-tag:
+    type: string
+    default: 9c66f42143d0365cbd5759443fcebf797e1ceb0c
+  windows:
+    description: Set by Monday's schedule, and by no other run.
+    type: boolean
+    default: false
+
+jobs:
+  image:
+    machine:
+      image: ubuntu-2404:current
+    resource_class: large
+    environment:
+      IMAGE: ghcr.io/takumu-dev/irama-ci:<< pipeline.parameters.image-tag >>
+    steps:
+      - checkout
+      - run:
+          name: Check that the config names the image of ci/linux/
+          command: |
+            tag=$(ci/image-tag.sh)
+            if [ "$tag" != "<< pipeline.parameters.image-tag >>" ]; then
+              echo "ci/linux/ is now $tag: set image-tag in .circleci/config.yml to that" >&2
+              exit 1
+            fi
+      # The package is public, so it looks for the tag as the jobs pull it, without logging in. A
+      # missing tag reads "manifest unknown", and a package never pushed reads "denied" or "name
+      # unknown". Any other failure, such as a timeout, stops the job rather than rebuild a tag
+      # that may exist.
+      - run:
+          name: Build and push the image, unless it exists
+          no_output_timeout: 30m
+          command: |
+            if output=$(docker manifest inspect "$IMAGE" 2>&1); then
+              echo "$IMAGE exists"
+              exit 0
+            fi
+            case $output in
+              *"manifest unknown"* | *"name unknown"* | *denied*) ;;
+              *) echo "$output" >&2; exit 1 ;;
+            esac
+            echo "$IMAGE is missing: $output"
+            echo "$GHCR_TOKEN" | docker login ghcr.io --username takumu-dev --password-stdin
+            docker build --tag "$IMAGE" ci/linux
+            docker push "$IMAGE"
+
+  linux:
+    parameters:
+      preset:
+        type: string
+      tests:
+        description: The preset's workflow runs tests, whose JUnit file the job keeps.
+        type: boolean
+        default: true
+      restore-only:
+        description: Restores the vcpkg binary cache but never saves one.
+        type: boolean
+        default: false
+    # The package is public, as the repository is, so pulling the image needs no login.
+    docker:
+      - image: ghcr.io/takumu-dev/irama-ci:<< pipeline.parameters.image-tag >>
+    resource_class: large
+    environment:
+      VCPKG_ROOT: /opt/vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: /opt/vcpkg-cache
+      # The container can see more of the host's CPUs than it may use.
+      CMAKE_BUILD_PARALLEL_LEVEL: "4"
+      VCPKG_MAX_CONCURRENCY: "4"
+    steps:
+      - checkout
+      # vcpkg reads the ports at the versions the manifest names from the registry's history, so a
+      # shallow clone won't do. A blobless one fetches only the files vcpkg reads.
+      - run:
+          name: Set up vcpkg at the manifest's baseline
+          command: |
+            baseline=$(jq --raw-output '."builtin-baseline"' vcpkg.json)
+            git clone --quiet --filter=blob:none --no-checkout https://github.com/microsoft/vcpkg "$VCPKG_ROOT"
+            git -C "$VCPKG_ROOT" checkout --quiet "$baseline"
+            "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
+            mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+      # Every preset builds its dependencies with x64-linux and the image's default compiler, so
+      # one cache serves every Linux job. The image, the manifest and the presets decide what vcpkg
+      # builds, so they make the key.
+      - run:
+          name: Gather what vcpkg builds the ports from
+          command: |
+            git ls-files -z vcpkg.json vcpkg-configuration.json CMakePresets.json |
+              sort -z | xargs -0 cat > /tmp/vcpkg-inputs
+      - restore_cache:
+          name: Restore the vcpkg binary cache
+          keys:
+            - vcpkg-x64-linux-<< pipeline.parameters.image-tag >>-{{ checksum "/tmp/vcpkg-inputs" }}
+            - vcpkg-x64-linux-<< pipeline.parameters.image-tag >>-
+      # vcpkg prints nothing while it builds a port, which can take longer than CircleCI's ten
+      # minutes without output allow. The output is also kept in the build tree, for a failed job's
+      # artifacts.
+      - run:
+          name: Configure, build and test
+          no_output_timeout: 30m
+          command: |
+            set -o pipefail
+            mkdir -p build/<< parameters.preset >>
+            cmake --workflow --preset << parameters.preset >> 2>&1 |
+              tee build/<< parameters.preset >>/workflow.log
+      # Only develop saves a cache, which pull requests then restore. A key is saved once, and a
+      # failed job saves nothing, or a cache missing ports would stand until the key changed.
+      - when:
+          condition:
+            and:
+              - equal: [develop, << pipeline.git.branch >>]
+              - not: << parameters.restore-only >>
+          steps:
+            - save_cache:
+                name: Save the vcpkg binary cache
+                key: vcpkg-x64-linux-<< pipeline.parameters.image-tag >>-{{ checksum "/tmp/vcpkg-inputs" }}
+                paths:
+                  - /opt/vcpkg-cache
+      - when:
+          condition: << parameters.tests >>
+          steps:
+            - store_test_results:
+                path: build/<< parameters.preset >>/junit.xml
+      - run:
+          name: Gather the logs of a failed job
+          when: on_fail
+          command: ci/gather-logs.sh logs
+      - store_artifacts:
+          path: logs
+
+  ci:
+    docker:
+      - image: debian:trixie-slim
+    resource_class: small
+    steps:
+      - run:
+          name: Every other job passed
+          command: "true"
+
+# Pull requests, merges and the schedules each have a workflow, which run the same jobs. A pull
+# request's pipelines run on its own branch. Merging it closes it, which starts a pipeline on the
+# branch it merged into.
+workflows:
+  pull-request:
+    when:
+      and:
+        - not: &scheduled
+            equal: [schedule, << pipeline.event.name >>]
+        - not: &closed
+            equal: [closed, << pipeline.event.action >>]
+        - not: &develop-or-main
+            or:
+              - equal: [main, << pipeline.git.branch >>]
+              - equal: [develop, << pipeline.git.branch >>]
+    jobs: &jobs
+      - image:
+          context: ghcr
+      - linux:
+          name: gcc-debug
+          preset: gcc-debug
+          requires: [image]
+      - linux:
+          name: gcc-release
+          preset: gcc-release
+          requires: [image]
+      - linux:
+          name: clang-debug
+          preset: clang-debug
+          requires: [image]
+      - linux:
+          name: clang-release
+          preset: clang-release
+          requires: [image]
+      # It installs no ports, so a cache it saved would be empty and would stand in for the others'.
+      - linux:
+          name: gcc-libirama
+          preset: gcc-libirama
+          tests: false
+          restore-only: true
+          requires: [image]
+      - ci:
+          requires:
+            - image
+            - gcc-debug
+            - gcc-release
+            - clang-debug
+            - clang-release
+            - gcc-libirama
+
+  merge:
+    when:
+      and:
+        - *closed
+        - *develop-or-main
+    jobs: *jobs
+
+  schedule:
+    when: *scheduled
+    jobs: *jobs
