@@ -1,11 +1,16 @@
 # SPDX-FileCopyrightText: 2026 takumu-dev
 # SPDX-License-Identifier: Zlib
 
-# The oldest compilers and standard library Irama supports. The floors never fall, and configuring
-# with anything older stops here, rather than somewhere deep in a standard header. The CMake floor
-# is cmake_minimum_required's, at the top of the project.
+# The oldest compilers, standard library and checking tools Irama supports. The floors never fall,
+# and configuring with anything older stops here, rather than somewhere deep in a standard header or
+# in a check that disagrees with CI's. The CMake floor is cmake_minimum_required's, at the top of
+# the project.
 
 include_guard(GLOBAL)
+
+# Clang's floor, which LLVM's clang-format and clang-tidy follow, since each release formats and
+# checks differently.
+set(irama_clang_floor 23)
 
 # Stops the configuration if the C++ compiler with this CMake compiler id and version is one Irama
 # supports, but older than its floor. Any other compiler gets a warning.
@@ -15,8 +20,8 @@ function(irama_check_compiler_floor id version)
         set(needed "GCC 16")
         set(found "GCC ${version}")
     elseif(id STREQUAL "Clang")
-        set(floor 23)
-        set(needed "Clang 23")
+        set(floor ${irama_clang_floor})
+        set(needed "Clang ${irama_clang_floor}")
         set(found "Clang ${version}")
     elseif(id STREQUAL "MSVC")
         # CMake reports cl's own version, which runs five majors ahead of the toolset's.
@@ -78,4 +83,20 @@ int main(int argc, char**) { return info[argc]; }
     file(STRINGS "${probe_binary}" line REGEX "INFO:libstdcxx\\[[0-9]*\\]")
     string(REGEX MATCH "INFO:libstdcxx\\[([0-9]*)\\]" _ "${line}")
     set(${out_var} "${CMAKE_MATCH_1}" PARENT_SCOPE)
+endfunction()
+
+# Stops the configuration if `tool`, one of the checking tools clang-format, clang-tidy and Doxygen,
+# is at a `version` older than its floor.
+function(irama_check_tool_floor tool version)
+    if(tool STREQUAL "clang-format" OR tool STREQUAL "clang-tidy")
+        set(floor ${irama_clang_floor})
+    elseif(tool STREQUAL "Doxygen")
+        set(floor 1.18)
+    else()
+        message(FATAL_ERROR "Irama has no floor for the tool ${tool}.")
+    endif()
+
+    if(version VERSION_LESS floor)
+        message(FATAL_ERROR "Irama needs ${tool} ${floor} or newer; this is ${tool} ${version}.")
+    endif()
 endfunction()

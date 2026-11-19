@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: 2026 takumu-dev
+# SPDX-License-Identifier: Zlib
+
+# The reference for libirama's public headers: irama.h, and each component's public headers. Build
+# the `docs` target, which sets IRAMA_DOCS_DIR to build/<preset>/docs and runs Doxygen from the
+# repository's root. Every declaration in those headers must be documented, and any warning fails
+# the run. The HTML is a local view, never published.
+
+PROJECT_NAME           = Irama
+PROJECT_BRIEF          = "A music tracker with built-in synthesisers"
+
+# irama.h, and from the components' folders only their public include trees, so that their sources
+# and private headers stay out. Each include tree with headers in it is listed under
+# STRIP_FROM_INC_PATH too, which takes no patterns, so that its headers show as <irama/...>.
+INPUT                  = libirama/include/irama/irama.h \
+                         libirama/src
+RECURSIVE              = YES
+FILE_PATTERNS          = */include/irama/engine/*.hpp
+STRIP_FROM_PATH        = libirama/include
+STRIP_FROM_INC_PATH    = libirama/include
+
+# Knows the standard library's classes, so that a specialisation such as std::formatter has a
+# scope to be documented in.
+BUILTIN_STL_SUPPORT    = YES
+
+JAVADOC_AUTOBRIEF      = YES
+MARKDOWN_SUPPORT       = YES
+
+WARN_IF_UNDOCUMENTED   = YES
+WARN_IF_DOC_ERROR      = YES
+WARN_IF_INCOMPLETE_DOC = YES
+WARN_AS_ERROR          = FAIL_ON_WARNINGS
+QUIET                  = YES
+
+OUTPUT_DIRECTORY       = $(IRAMA_DOCS_DIR)
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+GENERATE_XML           = NO
+
+# No diagrams, so the check needs no Graphviz.
+HAVE_DOT               = NO

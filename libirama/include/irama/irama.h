@@ -27,7 +27,7 @@
 /// \param major The major part of the version.
 /// \param minor The minor part of the version, below 1000.
 /// \param patch The patch part of the version, below 1000.
-#define IRAMA_MAKE_VERSION(major, minor, patch) ((major) * 1000000 + (minor) * 1000 + (patch))
+#define IRAMA_MAKE_VERSION(major, minor, patch) (((major) * 1000000) + ((minor) * 1000) + (patch))
 
 /// The version of libirama this header belongs to, encoded by IRAMA_MAKE_VERSION(). Compare it
 /// with irama_version() to learn whether the library a program runs with is the one it was

@@ -61,3 +61,20 @@ irama_add_floor_test("configuring with libstdc++ 15 fails naming the floor"
 )
 irama_add_floor_test("configuring with libstdc++ 16 passes" LIBSTDCXX_RELEASE=16)
 irama_add_floor_test("configuring with another standard library passes" LIBSTDCXX_RELEASE=)
+irama_add_floor_test("configuring with clang-format 22 fails naming the floor"
+    TOOL=clang-format TOOL_VERSION=22.1.8
+    FAILS_WITH "Irama needs clang-format 23 or newer; this is clang-format 22\\.1\\.8"
+)
+irama_add_floor_test("configuring with clang-format 23 passes"
+    TOOL=clang-format TOOL_VERSION=23.0.0
+)
+irama_add_floor_test("configuring with clang-tidy 22 fails naming the floor"
+    TOOL=clang-tidy TOOL_VERSION=22.1.8
+    FAILS_WITH "Irama needs clang-tidy 23 or newer; this is clang-tidy 22\\.1\\.8"
+)
+irama_add_floor_test("configuring with clang-tidy 23 passes" TOOL=clang-tidy TOOL_VERSION=23.0.0)
+irama_add_floor_test("configuring with Doxygen 1.17 fails naming the floor"
+    TOOL=Doxygen TOOL_VERSION=1.17.0
+    FAILS_WITH "Irama needs Doxygen 1\\.18 or newer; this is Doxygen 1\\.17\\.0"
+)
+irama_add_floor_test("configuring with Doxygen 1.18 passes" TOOL=Doxygen TOOL_VERSION=1.18.0)
