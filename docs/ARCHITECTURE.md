@@ -57,7 +57,9 @@ The tests check that all of these agree.
 | `CMakeLists.txt` | The project, the part switches, and the version read from `irama.h`. |
 | `CMakePresets.json` | Every supported configuration, each with a workflow preset. |
 | `vcpkg.json` | The dependencies: libirama's at the top level, each other part's as a feature. |
-| `cmake/IramaFloors.cmake` | The compiler and libstdc++ floor checks. |
+| `cmake/IramaFloors.cmake` | The compiler, libstdc++ and checking tool floor checks. |
 | `cmake/IramaConventions.cmake` | The language standard and warning flags of every target. |
 | `cmake/IramaComponents.cmake` | `irama_add_component()`. |
+| `cmake/IramaLint.cmake` | The formatting, clang-tidy and documentation checks. |
+| `.clang-format`, `.clang-tidy`, `Doxyfile` | The settings of those checks. |
 | `tests/` | The tests, one folder per component under `unit/`, and the CLI and configuration checks. |
