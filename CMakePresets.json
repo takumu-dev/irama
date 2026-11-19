@@ -1,0 +1,163 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Kitware/CMake/master/Help/manual/presets/schema.json",
+  "version": 12,
+  "cmakeMinimumRequired": {
+    "major": 4,
+    "minor": 4,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "$comment": "Every preset builds with Ninja and takes its dependencies from vcpkg, found through VCPKG_ROOT.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "CMAKE_COMPILE_WARNING_AS_ERROR": true,
+        "CMAKE_EXPORT_COMPILE_COMMANDS": true
+      }
+    },
+    {
+      "name": "linux",
+      "hidden": true,
+      "inherits": "base",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-linux"
+      }
+    },
+    {
+      "name": "gcc",
+      "hidden": true,
+      "inherits": "linux",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++"
+      }
+    },
+    {
+      "name": "clang",
+      "hidden": true,
+      "inherits": "linux",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    },
+    {
+      "name": "debug",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "release",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "gcc-debug",
+      "inherits": ["gcc", "debug"],
+      "displayName": "GCC, debug"
+    },
+    {
+      "name": "gcc-release",
+      "inherits": ["gcc", "release"],
+      "displayName": "GCC, release"
+    },
+    {
+      "name": "clang-debug",
+      "inherits": ["clang", "debug"],
+      "displayName": "Clang with libstdc++, debug"
+    },
+    {
+      "name": "clang-release",
+      "inherits": ["clang", "release"],
+      "displayName": "Clang with libstdc++, release"
+    },
+    {
+      "name": "gcc-libirama",
+      "inherits": ["gcc", "release"],
+      "displayName": "GCC, release, libirama alone",
+      "description": "Every part but libirama switched off, so vcpkg installs only libirama's own dependencies, as a game building it would see.",
+      "cacheVariables": {
+        "IRAMA_BUILD_CLI": false,
+        "IRAMA_BUILD_TESTS": false
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "gcc-debug", "configurePreset": "gcc-debug" },
+    { "name": "gcc-release", "configurePreset": "gcc-release" },
+    { "name": "clang-debug", "configurePreset": "clang-debug" },
+    { "name": "clang-release", "configurePreset": "clang-release" },
+    { "name": "gcc-libirama", "configurePreset": "gcc-libirama" }
+  ],
+  "testPresets": [
+    {
+      "name": "test",
+      "hidden": true,
+      "output": {
+        "outputOnFailure": true,
+        "outputJUnitFile": "junit.xml"
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    { "name": "gcc-debug", "inherits": "test", "configurePreset": "gcc-debug" },
+    { "name": "gcc-release", "inherits": "test", "configurePreset": "gcc-release" },
+    { "name": "clang-debug", "inherits": "test", "configurePreset": "clang-debug" },
+    { "name": "clang-release", "inherits": "test", "configurePreset": "clang-release" }
+  ],
+  "workflowPresets": [
+    {
+      "name": "gcc-debug",
+      "steps": [
+        { "type": "configure", "name": "gcc-debug" },
+        { "type": "build", "name": "gcc-debug" },
+        { "type": "test", "name": "gcc-debug" }
+      ]
+    },
+    {
+      "name": "gcc-release",
+      "steps": [
+        { "type": "configure", "name": "gcc-release" },
+        { "type": "build", "name": "gcc-release" },
+        { "type": "test", "name": "gcc-release" }
+      ]
+    },
+    {
+      "name": "clang-debug",
+      "steps": [
+        { "type": "configure", "name": "clang-debug" },
+        { "type": "build", "name": "clang-debug" },
+        { "type": "test", "name": "clang-debug" }
+      ]
+    },
+    {
+      "name": "clang-release",
+      "steps": [
+        { "type": "configure", "name": "clang-release" },
+        { "type": "build", "name": "clang-release" },
+        { "type": "test", "name": "clang-release" }
+      ]
+    },
+    {
+      "name": "gcc-libirama",
+      "steps": [
+        { "type": "configure", "name": "gcc-libirama" },
+        { "type": "build", "name": "gcc-libirama" }
+      ]
+    }
+  ]
+}
