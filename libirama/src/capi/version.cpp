@@ -3,6 +3,4 @@
 
 #include <irama/irama.h>
 
-extern "C" int irama_version() {
-    return IRAMA_VERSION;
-}
+extern "C" int irama_version() { return IRAMA_VERSION; }

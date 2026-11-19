@@ -25,6 +25,4 @@ int run(std::span<char*> arguments) {
 } // namespace
 } // namespace irama_cli
 
-int main(int argc, char** argv) {
-    return irama_cli::run({argv, static_cast<std::size_t>(argc)});
-}
+int main(int argc, char** argv) { return irama_cli::run({argv, static_cast<std::size_t>(argc)}); }

@@ -32,7 +32,7 @@
 /// The version of libirama this header belongs to, encoded by IRAMA_MAKE_VERSION(). Compare it
 /// with irama_version() to learn whether the library a program runs with is the one it was
 /// compiled against.
-#define IRAMA_VERSION \
+#define IRAMA_VERSION                                                                              \
     IRAMA_MAKE_VERSION(IRAMA_VERSION_MAJOR, IRAMA_VERSION_MINOR, IRAMA_VERSION_PATCH)
 
 #ifdef __cplusplus

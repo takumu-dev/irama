@@ -4,6 +4,4 @@
 // Built as C99 with every warning an error: if irama.h strays from C99, this fails to compile.
 #include <irama/irama.h>
 
-int main(void) {
-    return irama_version() == IRAMA_VERSION ? 0 : 1;
-}
+int main(void) { return irama_version() == IRAMA_VERSION ? 0 : 1; }
