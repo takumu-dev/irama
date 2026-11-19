@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: 2026 takumu-dev
+# SPDX-License-Identifier: Zlib
+
+# Build trees, one per preset
+/build/
+
+# Presets for one machine only
+/CMakeUserPresets.json
