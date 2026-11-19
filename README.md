@@ -64,7 +64,8 @@ Changes reach `develop` and `main` only through pull requests, merged with a mer
 git flow: feature branches into `develop`, and release and hotfix branches into `main` and back into
 `develop`.
 
-CircleCI checks every pull request into `develop` or `main`, and every merge into them:
+CircleCI checks every pull request into `develop` or `main`, every merge into them, and `develop`
+twice a week:
 
 - Each Linux preset runs as its own job, `cmake --workflow --preset <preset>`, in the image built
   from `ci/linux/`: Docker's official GCC 16 image, with Clang 23 from apt.llvm.org pointed at
@@ -75,19 +76,21 @@ CircleCI checks every pull request into `develop` or `main`, and every merge int
   and pushes a tag only when it is missing.
 - Test jobs report their JUnit results. A failed job keeps its configure, build, test and vcpkg
   logs, and `build/<preset>/golden-failures/`, as artifacts.
-- vcpkg's binaries are cached per image tag, manifest and presets. Jobs on `develop` save the cache after
-  passing, and pull requests restore it.
+- vcpkg's binaries are cached per image tag, manifest and presets. Jobs on `develop` save the cache
+  after passing, and pull requests restore it.
 - The jobs fan into one check, `ci/circleci: ci`.
 
 Some settings live outside the repository:
 
-- **The CircleCI project** connects through CircleCI's GitHub App, with two triggers: pushes to a
-  branch with an open pull request, and merged pull requests. Nothing else builds, and pull
-  requests from forks never do. The `image` job pushes with the token in the organisation's `ghcr`
-  context. Two weekly schedule triggers run the jobs on `develop`, and Monday's sets the `windows`
-  pipeline parameter.
-- **A GitHub ruleset** on `develop` and `main` requires the `ci/circleci: ci` status, accepts
-  changes only through pull requests, and allows only merge commits.
+- **The CircleCI project** connects through CircleCI's GitHub App. Two triggers follow pull
+  requests: one builds each push to a branch with an open pull request, and one builds the branch a
+  pull request merges into. Two schedule triggers run the jobs on `develop` every Monday and
+  Thursday at 05:00 UTC, and Monday's sets the `windows` pipeline parameter. Nothing else builds,
+  and pull requests from forks never do. The `image` job pushes with the token in the organisation's
+  `ghcr` context.
+- **A GitHub ruleset** on `develop` and `main` requires the `ci/circleci: ci` status from CircleCI's
+  GitHub App, so no other app or account can set it. It accepts changes only through pull requests,
+  allows only merge commits, and stops either branch being deleted or force-pushed.
 
 ## Licences
 
