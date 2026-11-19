@@ -4,9 +4,9 @@
 
 # Checks that the image keeps the promises CI relies on: the compilers at their floors under the
 # names the presets use, GCC 16's libstdc++ under both of them, the sanitizer runtimes, LLVM's
-# format and tidy tools, and what CMake, vcpkg and CircleCI call. The image's build runs this
-# last, so an image that breaks a promise is never pushed. It reports every broken promise, not
-# just the first.
+# format and tidy tools, Doxygen, and what CMake, vcpkg and CircleCI call. The image's build runs
+# this last, so an image that breaks a promise is never pushed. It reports every broken promise,
+# not just the first.
 set -u
 
 failures=0
@@ -68,6 +68,7 @@ expect "clang is Clang 23" 'clang version 23\.' clang --version
 expect "clang++ is Clang 23" 'clang version 23\.' clang++ --version
 expect "clang-tidy is LLVM 23's" 'LLVM version 23\.' clang-tidy --version
 expect "clang-format is LLVM 23's" 'clang-format version 23\.' clang-format --version
+expect "Doxygen is 1.18" '^1\.18\.' doxygen --version
 
 # libstdc++ 16, built against and loaded at run time. Clang must take GCC 16's, not Debian's.
 cat > "$work/program.cpp" << 'EOF' || exit 1

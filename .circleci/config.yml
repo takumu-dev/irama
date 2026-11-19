@@ -15,7 +15,7 @@ parameters:
   # the tag is written here, and the image job fails when it is out of step with ci/linux/.
   image-tag:
     type: string
-    default: 9c66f42143d0365cbd5759443fcebf797e1ceb0c
+    default: 72c4907ef2ec0932583745b4fa366cdb6f49bdca
   windows:
     description: Set by Monday's schedule, and by no other run.
     type: boolean
@@ -192,6 +192,18 @@ workflows:
           tests: false
           restore-only: true
           requires: [image]
+      # The same holds for lint, which builds only the formatting and documentation checks.
+      - linux:
+          name: lint
+          preset: lint
+          tests: false
+          restore-only: true
+          requires: [image]
+      - linux:
+          name: tidy
+          preset: tidy
+          tests: false
+          requires: [image]
       - ci:
           requires:
             - image
@@ -200,6 +212,8 @@ workflows:
             - clang-debug
             - clang-release
             - gcc-libirama
+            - lint
+            - tidy
 
   merge:
     when:
