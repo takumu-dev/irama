@@ -139,6 +139,13 @@ departs from them, it says so.
   Clang's ThreadSanitizer then fails to link beside its own. Keep them together: alone in a file,
   the operators would be silently left out, since the C++ runtime already defines them.
 - The guard's own report, like a failed assertion's, turns RealtimeSanitizer off while it writes.
+- Threads pass data to and from the audio thread only through `irama::SpscQueue`, from
+  `<irama/engine/base/spsc_queue.hpp>`, never through a lock or a shared variable. Each queue has
+  one producer thread and one consumer thread for its whole life. Its messages are trivially
+  copyable, so none owns memory that the audio thread would free.
+- Code that more than one thread runs is tested under ThreadSanitizer, in the `clang-tsan` preset,
+  which runs the whole suite. It leaves the real-time guard off, since the guard's operators clash
+  with ThreadSanitizer's.
 
 ## Ownership and types
 
