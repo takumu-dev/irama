@@ -60,6 +60,10 @@ dependencies: `IRAMA_BUILD_CLI` and `IRAMA_BUILD_TESTS`. With every switch off, 
 `gcc-libirama`, only libirama and its own dependencies are built. A project that adds Irama as a
 subproject gets the same, since the switches are off there by default.
 
+`IRAMA_REALTIME_GUARD` compiles in the real-time guard, which stops the program when code inside a
+render call allocates or frees memory. It is off by default, and on in the three `*-debug` presets
+and `tidy`.
+
 ## Tests
 
 The tests run with each workflow preset, or alone with `ctest --preset <preset>`. Every test carries

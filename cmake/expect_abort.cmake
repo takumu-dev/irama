@@ -9,9 +9,13 @@
 #   REPORT     a regular expression that the one line the program writes to stderr must match
 #              before it aborts. Without REPORT, the program must instead exit 0 and write nothing
 #              to stderr, as it does where the check it makes is compiled out.
+#   REALTIME_SANITIZER_CALL
+#              in place of REPORT, the C library function that RealtimeSanitizer must report as
+#              called in a real-time context, ending the program with its own status, 43
 #
 # A sanitizer's report runs to several lines and ends the program with a status of its own, so a
-# sanitizer that reports in place of the program fails the test.
+# sanitizer that reports in place of the program fails the test, unless REALTIME_SANITIZER_CALL asks
+# for RealtimeSanitizer's report.
 
 execute_process(
     COMMAND "${PROGRAM}" ${ARGUMENTS}
@@ -19,6 +23,20 @@ execute_process(
     ERROR_VARIABLE stderr
 )
 string(REPLACE "\r\n" "\n" stderr "${stderr}")
+
+if(DEFINED REALTIME_SANITIZER_CALL)
+    string(CONCAT expected "==ERROR: RealtimeSanitizer: unsafe-library-call\n"
+        "Intercepted call to real-time unsafe function `${REALTIME_SANITIZER_CALL}` in real-time "
+        "context!\n"
+    )
+    string(FIND "${stderr}" "${expected}" found)
+    if(NOT result STREQUAL "43" OR found EQUAL -1)
+        message(FATAL_ERROR "${PROGRAM} should have been stopped by RealtimeSanitizer for calling "
+            "${REALTIME_SANITIZER_CALL}, but it ended with ${result}, writing to stderr:\n${stderr}"
+        )
+    endif()
+    return()
+endif()
 
 if(NOT DEFINED REPORT)
     if(NOT result STREQUAL "0" OR NOT stderr STREQUAL "")

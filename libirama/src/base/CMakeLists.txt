@@ -7,5 +7,12 @@ irama_add_component(base
         include/irama/engine/base/assertion.hpp
         include/irama/engine/base/narrow.hpp
         include/irama/engine/base/nonblocking.hpp
-    SOURCES assertion.cpp
+        include/irama/engine/base/render_scope.hpp
+    SOURCES
+        assertion.cpp
+        realtime_sanitizer.hpp
+        render_scope.cpp
 )
+if(IRAMA_REALTIME_GUARD)
+    target_compile_definitions(irama_base PRIVATE IRAMA_REALTIME_GUARD)
+endif()

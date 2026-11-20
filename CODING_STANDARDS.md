@@ -105,9 +105,40 @@ departs from them, it says so.
 - irama-cli keeps exceptions on, and lets a standard-library exception end the program. It catches
   nothing without a comment saying why.
 - `noexcept` goes on move operations and `swap`, where clang-tidy's
-  `performance-noexcept-move-constructor` and `performance-noexcept-swap` ask for it, and nowhere
+  `performance-noexcept-move-constructor` and `performance-noexcept-swap` ask for it, and on a
+  replacement that must match a declaration carrying it, such as `operator delete`, and nowhere
   else. With exceptions off, it would change nothing elsewhere but type traits, and would be noise
   on every declaration.
+
+## Real-time code
+
+- Code that a render call runs keeps the real-time rules: it allocates and frees no memory, takes
+  no lock and waits on nothing, does no file, network or console I/O and writes no log, throws
+  nothing, and calls nothing whose run time has no limit, such as a system call or a container that
+  can grow.
+- A render entry point carries `IRAMA_NONBLOCKING`, from `<irama/engine/base/nonblocking.hpp>`,
+  after its parameter list, and holds an `irama::RenderScope`, from
+  `<irama/engine/base/render_scope.hpp>`, for as long as it runs. The entry point owns the scope, so
+  no host can forget it, and a host never opens one itself.
+- Two checks hold the rules, and each stops the program at the first break, so a test or program
+  that renders fails at the place it broke them:
+  - **The real-time guard** replaces the 20 replaceable forms of the global `operator new` and
+    `operator delete`. Inside a render scope on the calling thread, any of them writes one line to
+    stderr, saying whether memory was allocated or freed and how much, and aborts. It works on every
+    compiler, but sees only `new` and `delete`: not `malloc` called directly, nor the C library or
+    the OS. The CMake option `IRAMA_REALTIME_GUARD`, off by default, compiles it in. The three
+    `*-debug` presets and `tidy` turn it on. The release, sanitizer and libirama-only presets leave
+    it off: replaced operators hide AddressSanitizer's `alloc-dealloc-mismatch` check and clash
+    with Clang's ThreadSanitizer, and a game's build keeps its own allocator.
+  - **RealtimeSanitizer**, in the `clang-rtsan` preset, holds every `IRAMA_NONBLOCKING` function to
+    the rules while it runs, catching `malloc`, locks, sleeps, I/O and system calls as well. It runs
+    on Clang on Linux alone.
+- The guard's operators live in the same source file as `RenderScope`'s constructor, which stays out
+  of line. Every program that renders opens a scope, so the linker always takes that file, and the
+  operators with it, from the static library, under AddressSanitizer and ThreadSanitizer too, though
+  Clang's ThreadSanitizer then fails to link beside its own. Keep them together: alone in a file,
+  the operators would be silently left out, since the C++ runtime already defines them.
+- The guard's own report, like a failed assertion's, turns RealtimeSanitizer off while it writes.
 
 ## Ownership and types
 
@@ -187,9 +218,9 @@ departs from them, it says so.
 - An assertion ends the program, so a Catch2 test case can't watch one fail. Each check that must
   abort is a case of a small program under `tests/abort/`, added with `irama_add_abort_test()`,
   which runs it through `cmake/expect_abort.cmake`. The script passes only if the program aborts
-  after writing one line to stderr that matches the expected report, or, for a check that is
-  compiled out, exits 0 quietly. Such a test carries the `abort` label, and every other test the
-  `unit` label.
+  after writing one line to stderr that matches the expected report, or RealtimeSanitizer stops it
+  for the C library call the test names, or, for a check that is compiled out, the program exits 0
+  quietly. Such a test carries the `abort` label, and every other test the `unit` label.
 - Every Catch2 program runs from `tests/catch_main.cpp`, not Catch2's own main. It turns off MSVC's
   abort dialog, as irama-cli's main and the programs under `tests/abort/` do, so a test that aborts
   fails at once rather than wait for a click.
