@@ -73,8 +73,12 @@ which **ThreadSanitizer**, in `clang-tsan`, watches for races.
 ## Dependencies
 
 Every dependency comes from `vcpkg.json`. libirama's are its top-level dependencies, and each other
-part's are a manifest feature. Every configuration checks the licence of each port vcpkg installed
-against one of two allowlists in `cmake/licenses.json`:
+part's are a manifest feature. An overlay port in `ports/`, which `vcpkg-configuration.json` puts
+ahead of vcpkg's own, pins a dependency to a newer upstream commit than vcpkg's port has: `drlibs`,
+for the bounds fixes in dr_flac 0.13.4 and after.
+
+Every configuration checks the licence of each port vcpkg installed against one of two allowlists
+in `cmake/licenses.json`:
 
 - **libirama's list** covers libirama's dependencies and every port they depend on. It admits only
   licences that ask a game for no notice, so libirama needs no third-party notices.
@@ -109,6 +113,7 @@ The tests check that all of these agree.
 | `CMakeLists.txt` | The project, the part switches, the real-time guard's switch, and the version read from `irama.h`. |
 | `CMakePresets.json` | Every supported configuration, each with a workflow preset. |
 | `vcpkg.json` | The dependencies: libirama's at the top level, each other part's as a feature. |
+| `vcpkg-configuration.json`, `ports/` | The overlay ports, which stand in for vcpkg's own. |
 | `cmake/IramaFloors.cmake` | The compiler, libstdc++ and checking tool floor checks. |
 | `cmake/IramaConventions.cmake` | The language standard and warning flags of every target. |
 | `cmake/IramaComponents.cmake` | `irama_add_component()` and `irama_check_link_closure()`. |
