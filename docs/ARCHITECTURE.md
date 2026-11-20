@@ -63,3 +63,4 @@ The tests check that all of these agree.
 | `cmake/IramaLint.cmake` | The formatting, clang-tidy and documentation checks. |
 | `.clang-format`, `.clang-tidy`, `Doxyfile` | The settings of those checks. |
 | `tests/` | The tests, one folder per component under `unit/`, and the CLI and configuration checks. |
+| `ci/` | The CI's Linux image, under `linux/`, and the Windows job's scripts, under `windows/`. |

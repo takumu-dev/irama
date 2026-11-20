@@ -7,7 +7,11 @@
 # that branch protection requires, as the status `ci/circleci: ci`.
 #
 # Every Linux job runs in the image built from ci/linux/, which the `image` job builds and pushes
-# when its tag is missing.
+# when its tag is missing. The Windows job runs on CircleCI's Windows Server image, at a dated tag,
+# which the scripts in ci/windows/ set up with MSVC.
+#
+# A Windows minute costs far more than a Linux one, so the Windows job runs on pull requests and on
+# Monday's schedule, and doesn't repeat when a branch that passed it merges into develop or main.
 version: 2.1
 
 parameters:
@@ -20,6 +24,37 @@ parameters:
     description: Set by Monday's schedule, and by no other run.
     type: boolean
     default: false
+  # The dated tag of the Windows image, which fixes the MSVC the Windows job builds with. The vcpkg
+  # cache is keyed on it, since binaries built by one compiler are no use to another.
+  windows-image-tag:
+    type: string
+    default: "2026.10.1"
+
+commands:
+  # Builds and tests one preset.
+  windows-preset:
+    parameters:
+      preset:
+        type: string
+      # `always` runs it even after an earlier step has failed, so that one run reports both
+      # presets.
+      when:
+        type: enum
+        enum: [on_success, always]
+        default: on_success
+    steps:
+      # vcpkg prints nothing while it builds a port, which can take longer than CircleCI's ten
+      # minutes without output allow.
+      - run:
+          name: Configure, build and test << parameters.preset >>
+          when: << parameters.when >>
+          no_output_timeout: 30m
+          command: >-
+            pwsh -NoProfile -File ci/windows/build.ps1
+            -MsvcVersion $env:MSVC_VERSION -Preset << parameters.preset >>;
+            exit $LASTEXITCODE
+      - store_test_results:
+          path: build/<< parameters.preset >>/junit.xml
 
 jobs:
   image:
@@ -142,6 +177,63 @@ jobs:
       - store_artifacts:
           path: logs
 
+  windows:
+    machine:
+      image: windows-server-2025-gui:<< pipeline.parameters.windows-image-tag >>
+      shell: powershell.exe -ExecutionPolicy Bypass
+    resource_class: windows.medium
+    environment:
+      MSVC_VERSION: "14.52"
+      CI_TOOLS: C:\ci\tools
+      VCPKG_ROOT: C:\ci\vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: C:\ci\vcpkg-cache
+    # Each step runs in Windows PowerShell, which hands its script to PowerShell 7 and passes on how
+    # it exited.
+    steps:
+      - checkout
+      - run:
+          name: Install CMake and Ninja
+          command: >-
+            pwsh -NoProfile -File ci/windows/install-tools.ps1 -CMake 4.4.5 -Ninja 1.13.2;
+            exit $LASTEXITCODE
+      - run:
+          name: Check that the machine keeps the promises the build relies on
+          command: >-
+            pwsh -NoProfile -File ci/windows/check-runner.ps1 -MsvcVersion $env:MSVC_VERSION;
+            exit $LASTEXITCODE
+      - run:
+          name: Set up vcpkg at the manifest's baseline
+          command: pwsh -NoProfile -File ci/windows/setup-vcpkg.ps1; exit $LASTEXITCODE
+      # Both presets build their dependencies with x64-windows-static-md, so one cache serves both.
+      # The image, the manifest and the presets decide what vcpkg builds, so they make the key.
+      - run:
+          name: Gather what vcpkg builds the ports from
+          command: |
+            git ls-files vcpkg.json vcpkg-configuration.json CMakePresets.json |
+              Sort-Object | ForEach-Object { Get-Content $_ } | Set-Content C:\ci\vcpkg-inputs
+      - restore_cache:
+          name: Restore the vcpkg binary cache
+          keys:
+            - vcpkg-x64-windows-static-md-<< pipeline.parameters.windows-image-tag >>-{{ checksum "C:/ci/vcpkg-inputs" }}
+            - vcpkg-x64-windows-static-md-<< pipeline.parameters.windows-image-tag >>-
+      - windows-preset:
+          preset: msvc-debug
+      - windows-preset:
+          preset: msvc-release
+          when: always
+      # The job rarely runs on develop, so it saves from any branch, once both presets have passed.
+      - save_cache:
+          name: Save the vcpkg binary cache
+          key: vcpkg-x64-windows-static-md-<< pipeline.parameters.windows-image-tag >>-{{ checksum "C:/ci/vcpkg-inputs" }}
+          paths:
+            - C:\ci\vcpkg-cache
+      - run:
+          name: Gather the logs of a failed job
+          when: on_fail
+          command: pwsh -NoProfile -File ci/windows/gather-logs.ps1 logs; exit $LASTEXITCODE
+      - store_artifacts:
+          path: logs
+
   ci:
     docker:
       - image: debian:trixie-slim
@@ -151,9 +243,10 @@ jobs:
           name: Every other job passed
           command: "true"
 
-# Pull requests, merges and the schedules each have a workflow, which run the same jobs. A pull
-# request's pipelines run on its own branch. Merging it closes it, which starts a pipeline on the
-# branch it merged into.
+# Pull requests, merges and the schedules each have a workflow, which run the same Linux jobs. A
+# pull request's pipelines run on its own branch. Merging it closes it, which starts a pipeline on
+# the branch it merged into. Pull requests and Monday's schedule add the Windows job, which `ci`
+# then requires too.
 workflows:
   pull-request:
     when:
@@ -166,44 +259,71 @@ workflows:
             or:
               - equal: [main, << pipeline.git.branch >>]
               - equal: [develop, << pipeline.git.branch >>]
-    jobs: &jobs
-      - image:
+    jobs: &with-windows
+      - image: &image
           context: ghcr
-      - linux:
+      - linux: &gcc-debug
           name: gcc-debug
           preset: gcc-debug
           requires: [image]
-      - linux:
+      - linux: &gcc-release
           name: gcc-release
           preset: gcc-release
           requires: [image]
-      - linux:
+      - linux: &clang-debug
           name: clang-debug
           preset: clang-debug
           requires: [image]
-      - linux:
+      - linux: &clang-release
           name: clang-release
           preset: clang-release
           requires: [image]
       # It installs no ports, so a cache it saved would be empty and would stand in for the others'.
-      - linux:
+      - linux: &gcc-libirama
           name: gcc-libirama
           preset: gcc-libirama
           tests: false
           restore-only: true
           requires: [image]
       # The same holds for lint, which builds only the formatting and documentation checks.
-      - linux:
+      - linux: &lint
           name: lint
           preset: lint
           tests: false
           restore-only: true
           requires: [image]
-      - linux:
+      - linux: &tidy
           name: tidy
           preset: tidy
           tests: false
           requires: [image]
+      - windows
+      - ci:
+          requires:
+            - image
+            - gcc-debug
+            - gcc-release
+            - clang-debug
+            - clang-release
+            - gcc-libirama
+            - lint
+            - tidy
+            - windows
+
+  merge:
+    when:
+      and:
+        - *closed
+        - *develop-or-main
+    jobs: &linux
+      - image: *image
+      - linux: *gcc-debug
+      - linux: *gcc-release
+      - linux: *clang-debug
+      - linux: *clang-release
+      - linux: *gcc-libirama
+      - linux: *lint
+      - linux: *tidy
       - ci:
           requires:
             - image
@@ -215,13 +335,16 @@ workflows:
             - lint
             - tidy
 
-  merge:
+  schedule:
     when:
       and:
-        - *closed
-        - *develop-or-main
-    jobs: *jobs
+        - *scheduled
+        - not: << pipeline.parameters.windows >>
+    jobs: *linux
 
-  schedule:
-    when: *scheduled
-    jobs: *jobs
+  monday-schedule:
+    when:
+      and:
+        - *scheduled
+        - << pipeline.parameters.windows >>
+    jobs: *with-windows

@@ -85,10 +85,16 @@ twice a week:
 - A change under `ci/linux/` makes a new tag. Commit it, then set `image-tag` in
   `.circleci/config.yml` to what `ci/image-tag.sh` prints, or the `image` job fails. That job builds
   and pushes a tag only when it is missing.
+- One Windows job, on CircleCI's Windows Server image at a dated tag, runs `msvc-debug`, then
+  `msvc-release`, even when the first fails. The scripts in `ci/windows/` install CMake and Ninja,
+  check that the image has MSVC 14.52, and enter its developer command prompt. A Windows minute
+  costs far more than a Linux one, so the job runs on pull requests and on Monday's schedule, and
+  not on merges.
 - Test jobs report their JUnit results. A failed job keeps its configure, build, test and vcpkg
   logs, and `build/<preset>/golden-failures/`, as artifacts.
-- vcpkg's binaries are cached per image tag, manifest and presets. Jobs on `develop` save the cache
-  after passing, and pull requests restore it.
+- vcpkg's binaries are cached per image tag, manifest and presets. Linux jobs on `develop` save the
+  cache after passing, and pull requests restore it. The Windows job, keyed on the manifest and
+  presets alone, saves its cache from any branch once both presets pass.
 - The jobs fan into one check, `ci/circleci: ci`.
 
 Some settings live outside the repository:
