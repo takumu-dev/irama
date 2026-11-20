@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: 2026 takumu-dev
 # SPDX-License-Identifier: Zlib
 
-# The configuration's own behaviour, tested by running its checks as scripts.
+# The configuration's own behaviour, tested by running its checks as scripts, or by configuring
+# small projects that use them.
 
 # Adds a test that runs a floor check through check_floor.cmake with the definitions in ARGN. A
 # toolchain below its floor must stop the configuration with a message naming the floor
@@ -78,3 +79,63 @@ irama_add_floor_test("configuring with Doxygen 1.17 fails naming the floor"
     FAILS_WITH "Irama needs Doxygen 1\\.18 or newer; this is Doxygen 1\\.17\\.0"
 )
 irama_add_floor_test("configuring with Doxygen 1.18 passes" TOOL=Doxygen TOOL_VERSION=1.18.0)
+
+# The link-closure check, run by configuring the project in link_closure/ with its CASE. The
+# configuration must pass, or fail with a message matching FAILS_WITH.
+function(irama_add_link_closure_test name case)
+    cmake_parse_arguments(PARSE_ARGV 2 arg "" "FAILS_WITH" "")
+    set(test_name "build: ${name}")
+    add_test(NAME "${test_name}"
+        COMMAND "${CMAKE_COMMAND}" --fresh
+            -S "${CMAKE_CURRENT_SOURCE_DIR}/link_closure"
+            -B "${CMAKE_CURRENT_BINARY_DIR}/link_closure/${case}"
+            -G "${CMAKE_GENERATOR}"
+            "-DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
+            "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+            "-DCASE=${case}"
+    )
+    set_tests_properties("${test_name}" PROPERTIES LABELS unit)
+    if(DEFINED arg_FAILS_WITH)
+        set_tests_properties("${test_name}" PROPERTIES
+            PASS_REGULAR_EXPRESSION "CMake Error.*${arg_FAILS_WITH}"
+        )
+    else()
+        set_tests_properties("${test_name}" PROPERTIES FAIL_REGULAR_EXPRESSION "CMake Error")
+    endif()
+endfunction()
+
+irama_add_link_closure_test(
+    "libirama targets that link one another and the imported targets allowed pass the check"
+    allowed
+)
+irama_add_link_closure_test(
+    "a libirama target that links an imported target not allowed fails the check, naming the link"
+    imported
+    FAILS_WITH "irama_wav links Fake::forbidden\\."
+)
+irama_add_link_closure_test(
+    "a libirama target that links a library by name fails the check, naming the link"
+    library
+    FAILS_WITH "irama_wav links m\\."
+)
+irama_add_link_closure_test(
+    "a libirama target that links a target from outside libirama fails the check, naming the link"
+    target
+    FAILS_WITH "irama_wav links project_helper\\."
+)
+irama_add_link_closure_test(
+    "a libirama target that links through a generator expression fails the check, naming it"
+    expression
+    # Test properties take generator expressions, so the pattern steers clear of writing one.
+    FAILS_WITH "irama_wav links [^ ]+CONFIG:Debug.:Fake::allowed., a generator expression"
+)
+irama_add_link_closure_test(
+    "a libirama target that passes on a link not allowed fails the check, naming the link"
+    interface
+    FAILS_WITH "irama_base links Fake::forbidden\\."
+)
+irama_add_link_closure_test(
+    "a link added to libirama after libirama is configured fails the check, naming it"
+    late
+    FAILS_WITH "irama_engine links Fake::forbidden\\."
+)

@@ -37,6 +37,12 @@ exceptions or RTTI.
 component. Nothing links `capi`: it sits on top of the other components, and its only public header
 is `irama.h`, which is C.
 
+Once the whole project is configured, `irama_check_link_closure()` checks what every target under
+`libirama/` links. A libirama target may link other libirama targets, and the imported targets that
+`libirama/CMakeLists.txt` lists, which are those of libirama's own dependencies at the top level of
+`vcpkg.json`. Any other link stops the configuration, naming it. The list is fixed, rather than
+taken from each component's `PACKAGES`, so that no component can admit a package by declaring it.
+
 ## Version
 
 libirama and irama-cli share one version, written in `irama.h` as `IRAMA_VERSION_MAJOR`,
@@ -59,7 +65,7 @@ The tests check that all of these agree.
 | `vcpkg.json` | The dependencies: libirama's at the top level, each other part's as a feature. |
 | `cmake/IramaFloors.cmake` | The compiler, libstdc++ and checking tool floor checks. |
 | `cmake/IramaConventions.cmake` | The language standard and warning flags of every target. |
-| `cmake/IramaComponents.cmake` | `irama_add_component()`. |
+| `cmake/IramaComponents.cmake` | `irama_add_component()` and `irama_check_link_closure()`. |
 | `cmake/IramaLint.cmake` | The formatting, clang-tidy and documentation checks. |
 | `.clang-format`, `.clang-tidy`, `Doxyfile` | The settings of those checks. |
 | `tests/` | The tests, one folder per component under `unit/`, and the CLI and configuration checks. |
