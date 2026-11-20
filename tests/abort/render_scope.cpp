@@ -29,9 +29,10 @@ constexpr int usage_error = 2;
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables): see above.
 std::unique_ptr<int> held;
 
-// A type aligned beyond what operator new gives by default, so that it takes the aligned forms.
+// A type aligned beyond what operator new gives by default, so that it takes the aligned forms. It
+// fills its alignment, since MSVC warns about a type padded out to one.
 struct alignas(64) Aligned {
-    int value = 0;
+    std::array<std::byte, 64> bytes{};
 };
 
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables): as `held`.
