@@ -22,3 +22,9 @@ path = ["THIRD_PARTY_NOTICES.md", "tests/cmake/licenses/**"]
 precedence = "override"
 SPDX-FileCopyrightText = "2026 takumu-dev"
 SPDX-License-Identifier = "Zlib"
+
+# The golden WAV files, which irama-cli wrote.
+[[annotations]]
+path = ["tests/golden/*.wav"]
+SPDX-FileCopyrightText = "2026 takumu-dev"
+SPDX-License-Identifier = "Zlib"
