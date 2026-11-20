@@ -21,13 +21,15 @@ A music tracker with built-in synthesisers. The repository holds two parts:
 | GCC, on Linux | 16 |
 | Clang, on Linux | 23 |
 | libstdc++, under either Linux compiler | 16 |
+| MSVC, on Windows | 14.52 |
 | clang-format and clang-tidy, for the checks | 23 |
 | Doxygen, for the checks | 1.18 |
 
 Configuring with anything older stops with a message naming the version needed. Both Linux
-compilers build against libstdc++. Ninja and [vcpkg](https://vcpkg.io) are needed too: every
-dependency comes from the vcpkg manifest, found through the `VCPKG_ROOT` environment variable, and
-the build never downloads anything itself.
+compilers build against libstdc++. MSVC builds with its own standard library, from a developer
+command prompt for MSVC 14.52 or newer, which picks the compiler and the architecture. Ninja and
+[vcpkg](https://vcpkg.io) are needed too: every dependency comes from the vcpkg manifest, found
+through the `VCPKG_ROOT` environment variable, and the build never downloads anything itself.
 
 ## Building
 
@@ -42,6 +44,7 @@ cmake --workflow --preset gcc-debug
 |---|---|
 | `gcc-debug`, `gcc-release` | GCC |
 | `clang-debug`, `clang-release` | Clang with libstdc++ |
+| `msvc-debug`, `msvc-release` | MSVC, on Windows |
 | `gcc-libirama` | GCC, libirama alone, built but not tested |
 | `lint` | The formatting, with clang-format, and the documentation, with Doxygen |
 | `tidy` | Clang, every part built with clang-tidy |
@@ -82,10 +85,16 @@ twice a week:
 - A change under `ci/linux/` makes a new tag. Commit it, then set `image-tag` in
   `.circleci/config.yml` to what `ci/image-tag.sh` prints, or the `image` job fails. That job builds
   and pushes a tag only when it is missing.
+- One Windows job, on CircleCI's Windows Server image at a dated tag, runs `msvc-debug`, then
+  `msvc-release`, even when the first fails. The scripts in `ci/windows/` install CMake and Ninja,
+  check that the image has MSVC 14.52, and enter its developer command prompt. A Windows minute
+  costs far more than a Linux one, so the job runs on pull requests and on Monday's schedule, and
+  not on merges.
 - Test jobs report their JUnit results. A failed job keeps its configure, build, test and vcpkg
   logs, and `build/<preset>/golden-failures/`, as artifacts.
-- vcpkg's binaries are cached per image tag, manifest and presets. Jobs on `develop` save the cache
-  after passing, and pull requests restore it.
+- vcpkg's binaries are cached per image tag, manifest and presets. Linux jobs on `develop` save the
+  cache after passing, and pull requests restore it. The Windows job, keyed on the manifest and
+  presets alone, saves its cache from any branch once both presets pass.
 - The jobs fan into one check, `ci/circleci: ci`.
 
 Some settings live outside the repository:

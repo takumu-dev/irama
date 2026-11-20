@@ -16,10 +16,12 @@ departs from them, it says so.
 
 - libirama, irama-cli and the tests are C++23, as ordinary headers rather than C++ modules, with no
   compiler extensions. The C API, `irama.h`, is C99, and compiles as C++11 or newer too.
-- The supported compilers are GCC and Clang on Linux, both with libstdc++. Their floors are GCC 16,
-  Clang 23 and libstdc++ 16, and CMake's is 4.4. Floors never fall, and configuring with anything
-  older stops with a message naming the floor, rather than failing somewhere deep in a standard
-  header.
+- The supported compilers are GCC and Clang on Linux, both with libstdc++, and MSVC on Windows,
+  with its own standard library. Their floors are GCC 16, Clang 23, libstdc++ 16 and MSVC 14.52,
+  and CMake's is 4.4. Floors never fall, and configuring with anything older stops with a message
+  naming the floor, rather than failing somewhere deep in a standard header.
+- MSVC builds in its conformance mode, `/permissive-`, with `/Zc:__cplusplus`, so code that only one
+  compiler accepts fails on the others.
 - Every supported configuration is a preset in `CMakePresets.json`, with a workflow preset, so that
   a developer and CI build alike.
 - The build finds the libraries it depends on only with `find_package`, and never downloads
@@ -108,7 +110,7 @@ departs from them, it says so.
 ## C API
 
 - `irama.h` compiles as C99 and as C++11 or newer, so a game in C or in any C++ can include it. The
-  `capi` tests compile it as strict C99.
+  `capi` tests compile it as strict C99, or as C11 on MSVC, which has no C99 mode.
 - Its functions and types are `irama_*`, and its enumerators and macros `IRAMA_*`. The
   `.clang-tidy` beside it holds it to these, and turns off the checks that would have it use what
   only C++ has. clang-tidy reads that file only for the file it is run on, so the build checks
@@ -165,7 +167,11 @@ departs from them, it says so.
   with `build`, and of irama-cli with `cli`.
 - A test file is `<thing>_tests.cpp`, in its component's folder under `tests/unit/`. The check that
   `irama.h` compiles as C99 is the one C source among them, `irama_h_c99_tests.c`, a program of its
-  own registered with CTest under the `capi` name.
+  own registered with CTest under the `capi` name. MSVC has no C99 mode, so it builds that file as
+  C11.
+- Every Catch2 program runs from `tests/catch_main.cpp`, not Catch2's own main. It turns off MSVC's
+  abort dialog, as irama-cli's main does, so a test that aborts fails at once rather than wait for a
+  click.
 
 ## Commits and branches
 

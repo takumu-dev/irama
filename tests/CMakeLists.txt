@@ -13,6 +13,11 @@ include(Catch)
 enable_language(C)
 irama_check_compiler_floor("${CMAKE_C_COMPILER_ID}" "${CMAKE_C_COMPILER_VERSION}")
 
+# The main of every Catch2 test program, which keeps MSVC's runtime from waiting on a dialog.
+add_library(irama_catch_main STATIC catch_main.cpp)
+target_link_libraries(irama_catch_main PUBLIC Catch2::Catch2)
+irama_target_conventions(irama_catch_main)
+
 # Adds a component's Catch2 test cases as the program irama_<component>_tests, linking only that
 # component, so its tests can't lean on the components above it. Each case becomes one CTest test,
 # named after the component.
@@ -20,7 +25,7 @@ function(irama_add_tests component)
     cmake_parse_arguments(PARSE_ARGV 1 arg "" "" "SOURCES")
     set(target irama_${component}_tests)
     add_executable(${target} ${arg_SOURCES})
-    target_link_libraries(${target} PRIVATE irama::${component} Catch2::Catch2WithMain)
+    target_link_libraries(${target} PRIVATE irama::${component} irama_catch_main)
     irama_target_conventions(${target})
     catch_discover_tests(${target}
         TEST_PREFIX "${component}: "
