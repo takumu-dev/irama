@@ -1,0 +1,440 @@
+# SPDX-FileCopyrightText: 2026 takumu-dev
+# SPDX-License-Identifier: Zlib
+
+# Builds and tests Irama on every pull request into develop or main, on every merge into them, and
+# twice a week on develop, which catches drift in what the jobs download and keeps the caches from
+# expiring. Each Linux job runs one preset's workflow, and every job fans into `ci`, the one check
+# that branch protection requires, as the status `ci/circleci: ci`.
+#
+# Every Linux job runs in the image built from ci/linux/, which the `image` job builds and pushes
+# when its tag is missing. The Windows job runs on CircleCI's Windows Server image, at a dated tag,
+# which the scripts in ci/windows/ set up with MSVC.
+#
+# A Windows minute costs far more than a Linux one, so the Windows job runs on pull requests and on
+# Monday's schedule, and doesn't repeat when a branch that passed it merges into develop or main.
+version: 2.1
+
+parameters:
+  # What ci/image-tag.sh prints. CircleCI needs a job's image before the job can run anything, so
+  # the tag is written here, and the image job fails when it is out of step with ci/linux/.
+  image-tag:
+    type: string
+    default: 72c4907ef2ec0932583745b4fa366cdb6f49bdca
+  windows:
+    description: Set by Monday's schedule, and by no other run.
+    type: boolean
+    default: false
+  # The dated tag of the Windows image, which fixes the MSVC the Windows job builds with. The vcpkg
+  # cache is keyed on it, since binaries built by one compiler are no use to another.
+  windows-image-tag:
+    type: string
+    default: "2026.10.1"
+
+commands:
+  # Builds and tests one preset.
+  windows-preset:
+    parameters:
+      preset:
+        type: string
+      # `always` runs it even after an earlier step has failed, so that one run reports both
+      # presets.
+      when:
+        type: enum
+        enum: [on_success, always]
+        default: on_success
+    steps:
+      # vcpkg prints nothing while it builds a port, which can take longer than CircleCI's ten
+      # minutes without output allow.
+      - run:
+          name: Configure, build and test << parameters.preset >>
+          when: << parameters.when >>
+          no_output_timeout: 30m
+          command: >-
+            pwsh -NoProfile -File ci/windows/build.ps1
+            -MsvcVersion $env:MSVC_VERSION -Preset << parameters.preset >>;
+            exit $LASTEXITCODE
+      - store_test_results:
+          path: build/<< parameters.preset >>/junit.xml
+
+  # Restores the vcpkg binary cache that every Linux job shares. Every preset builds its
+  # dependencies with x64-linux and the image's default compiler, so one cache serves every Linux
+  # job. The image, the manifest, the overlay ports and the presets decide what vcpkg builds, so
+  # they make the key, in /tmp/vcpkg-inputs.
+  restore-linux-vcpkg-cache:
+    steps:
+      - run:
+          name: Gather what vcpkg builds the ports from
+          command: |
+            git ls-files -z vcpkg.json vcpkg-configuration.json CMakePresets.json ports |
+              sort -z | xargs -0 cat > /tmp/vcpkg-inputs
+      - restore_cache:
+          name: Restore the vcpkg binary cache
+          keys:
+            - vcpkg-x64-linux-<< pipeline.parameters.image-tag >>-{{ checksum "/tmp/vcpkg-inputs" }}
+            - vcpkg-x64-linux-<< pipeline.parameters.image-tag >>-
+
+jobs:
+  image:
+    machine:
+      image: ubuntu-2404:current
+    resource_class: large
+    environment:
+      IMAGE: ghcr.io/takumu-dev/irama-ci:<< pipeline.parameters.image-tag >>
+    steps:
+      - checkout
+      - run:
+          name: Check that the config names the image of ci/linux/
+          command: |
+            tag=$(ci/image-tag.sh)
+            if [ "$tag" != "<< pipeline.parameters.image-tag >>" ]; then
+              echo "ci/linux/ is now $tag: set image-tag in .circleci/config.yml to that" >&2
+              exit 1
+            fi
+      # The package is public, so it looks for the tag as the jobs pull it, without logging in. A
+      # missing tag reads "manifest unknown", and a package never pushed reads "denied" or "name
+      # unknown". Any other failure, such as a timeout, stops the job rather than rebuild a tag
+      # that may exist.
+      - run:
+          name: Build and push the image, unless it exists
+          no_output_timeout: 30m
+          command: |
+            if output=$(docker manifest inspect "$IMAGE" 2>&1); then
+              echo "$IMAGE exists"
+              exit 0
+            fi
+            case $output in
+              *"manifest unknown"* | *"name unknown"* | *denied*) ;;
+              *) echo "$output" >&2; exit 1 ;;
+            esac
+            echo "$IMAGE is missing: $output"
+            echo "$GHCR_TOKEN" | docker login ghcr.io --username takumu-dev --password-stdin
+            docker build --tag "$IMAGE" ci/linux
+            docker push "$IMAGE"
+
+  linux:
+    parameters:
+      preset:
+        type: string
+      tests:
+        description: The preset's workflow runs tests, whose JUnit file the job keeps.
+        type: boolean
+        default: true
+      restore-only:
+        description: Restores the vcpkg binary cache but never saves one.
+        type: boolean
+        default: false
+    # The package is public, as the repository is, so pulling the image needs no login.
+    docker:
+      - image: ghcr.io/takumu-dev/irama-ci:<< pipeline.parameters.image-tag >>
+    resource_class: large
+    environment:
+      VCPKG_ROOT: /opt/vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: /opt/vcpkg-cache
+      # The container can see more of the host's CPUs than it may use.
+      CMAKE_BUILD_PARALLEL_LEVEL: "4"
+      VCPKG_MAX_CONCURRENCY: "4"
+    steps:
+      - checkout
+      - run:
+          name: Set up vcpkg at the manifest's baseline
+          command: ci/setup-vcpkg.sh
+      - restore-linux-vcpkg-cache
+      # vcpkg prints nothing while it builds a port, which can take longer than CircleCI's ten
+      # minutes without output allow. The output is also kept in the build tree, for a failed job's
+      # artifacts.
+      - run:
+          name: Configure, build and test
+          no_output_timeout: 30m
+          command: |
+            set -o pipefail
+            mkdir -p build/<< parameters.preset >>
+            cmake --workflow --preset << parameters.preset >> 2>&1 |
+              tee build/<< parameters.preset >>/workflow.log
+      # Only develop saves a cache, which pull requests then restore. A key is saved once, and a
+      # failed job saves nothing, or a cache missing ports would stand until the key changed.
+      - when:
+          condition:
+            and:
+              - equal: [develop, << pipeline.git.branch >>]
+              - not: << parameters.restore-only >>
+          steps:
+            - save_cache:
+                name: Save the vcpkg binary cache
+                key: vcpkg-x64-linux-<< pipeline.parameters.image-tag >>-{{ checksum "/tmp/vcpkg-inputs" }}
+                paths:
+                  - /opt/vcpkg-cache
+      - when:
+          condition: << parameters.tests >>
+          steps:
+            - store_test_results:
+                path: build/<< parameters.preset >>/junit.xml
+      - run:
+          name: Gather the logs of a failed job
+          when: on_fail
+          command: ci/gather-logs.sh logs
+      - store_artifacts:
+          path: logs
+
+  # ThreadSanitizer supports at most 30 bits of ASLR entropy on x86_64, and CircleCI's Docker hosts
+  # use more. Its fallback, running the program again with ASLR off, needs a system call that
+  # Docker's default seccomp profile forbids. So this job runs on a machine, where it can lower the
+  # entropy, and runs the image there itself, with the checkout and the vcpkg cache mounted. The
+  # container runs as root, so what it writes in the checkout is root's, which the later steps only
+  # read.
+  linux-tsan:
+    machine:
+      image: ubuntu-2404:current
+    resource_class: large
+    environment:
+      IMAGE: ghcr.io/takumu-dev/irama-ci:<< pipeline.parameters.image-tag >>
+    steps:
+      - checkout
+      - run:
+          name: Lower the ASLR entropy to what ThreadSanitizer supports
+          command: sudo sysctl -w vm.mmap_rnd_bits=28
+      # The Docker jobs' cache restores to /opt, where this machine's user can't write.
+      - run:
+          name: Make the vcpkg binary cache's directory
+          command: |
+            sudo mkdir -p /opt/vcpkg-cache
+            sudo chown "$(id -u):$(id -g)" /opt/vcpkg-cache
+      # It shares the Docker jobs' cache, and never saves it, leaving that to them.
+      - restore-linux-vcpkg-cache
+      - run:
+          name: Start the image
+          command: |
+            docker run --detach --name irama \
+              --volume "$PWD:$PWD" --workdir "$PWD" \
+              --volume /opt/vcpkg-cache:/opt/vcpkg-cache \
+              --env VCPKG_ROOT=/opt/vcpkg --env VCPKG_DEFAULT_BINARY_CACHE=/opt/vcpkg-cache \
+              --env CMAKE_BUILD_PARALLEL_LEVEL=4 --env VCPKG_MAX_CONCURRENCY=4 \
+              "$IMAGE" sleep infinity
+      - run:
+          name: Set up vcpkg at the manifest's baseline
+          command: docker exec irama ci/setup-vcpkg.sh
+      - run:
+          name: Configure, build and test
+          no_output_timeout: 30m
+          command: |
+            docker exec irama bash -c '
+              set -o pipefail
+              mkdir -p build/clang-tsan
+              cmake --workflow --preset clang-tsan 2>&1 | tee build/clang-tsan/workflow.log'
+      - store_test_results:
+          path: build/clang-tsan/junit.xml
+      - run:
+          name: Gather the logs of a failed job
+          when: on_fail
+          command: docker exec irama ci/gather-logs.sh logs
+      - store_artifacts:
+          path: logs
+
+  windows:
+    machine:
+      image: windows-server-2025-gui:<< pipeline.parameters.windows-image-tag >>
+      shell: powershell.exe -ExecutionPolicy Bypass
+    resource_class: windows.medium
+    environment:
+      MSVC_VERSION: "14.52"
+      CI_TOOLS: C:\ci\tools
+      VCPKG_ROOT: C:\ci\vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: C:\ci\vcpkg-cache
+    # Each step runs in Windows PowerShell, which hands its script to PowerShell 7 and passes on how
+    # it exited.
+    steps:
+      - checkout
+      - run:
+          name: Install CMake and Ninja
+          command: >-
+            pwsh -NoProfile -File ci/windows/install-tools.ps1 -CMake 4.4.5 -Ninja 1.13.2;
+            exit $LASTEXITCODE
+      - run:
+          name: Check that the machine keeps the promises the build relies on
+          command: >-
+            pwsh -NoProfile -File ci/windows/check-runner.ps1 -MsvcVersion $env:MSVC_VERSION;
+            exit $LASTEXITCODE
+      - run:
+          name: Set up vcpkg at the manifest's baseline
+          command: pwsh -NoProfile -File ci/windows/setup-vcpkg.ps1; exit $LASTEXITCODE
+      # Both presets build their dependencies with x64-windows-static-md, so one cache serves both.
+      # The image, the manifest, the overlay ports and the presets decide what vcpkg builds, so they
+      # make the key.
+      - run:
+          name: Gather what vcpkg builds the ports from
+          command: |
+            git ls-files vcpkg.json vcpkg-configuration.json CMakePresets.json ports |
+              Sort-Object | ForEach-Object { Get-Content $_ } | Set-Content C:\ci\vcpkg-inputs
+      - restore_cache:
+          name: Restore the vcpkg binary cache
+          keys:
+            - vcpkg-x64-windows-static-md-<< pipeline.parameters.windows-image-tag >>-{{ checksum "C:/ci/vcpkg-inputs" }}
+            - vcpkg-x64-windows-static-md-<< pipeline.parameters.windows-image-tag >>-
+      - windows-preset:
+          preset: msvc-debug
+      - windows-preset:
+          preset: msvc-release
+          when: always
+      # The job rarely runs on develop, so it saves from any branch, once both presets have passed.
+      - save_cache:
+          name: Save the vcpkg binary cache
+          key: vcpkg-x64-windows-static-md-<< pipeline.parameters.windows-image-tag >>-{{ checksum "C:/ci/vcpkg-inputs" }}
+          paths:
+            - C:\ci\vcpkg-cache
+      - run:
+          name: Gather the logs of a failed job
+          when: on_fail
+          command: pwsh -NoProfile -File ci/windows/gather-logs.ps1 logs; exit $LASTEXITCODE
+      - store_artifacts:
+          path: logs
+
+  # Every file names its copyright holder and licence, as REUSE asks, in its first lines or in
+  # REUSE.toml. The FSF's image, pinned by digest, has reuse, and the git and ssh that checkout
+  # needs.
+  reuse:
+    docker:
+      - image: fsfe/reuse:6.3.0@sha256:2748d04c2adeb747c9a44831bc99a9cbfd7bf7ff6fc371a4b63204944e3e47b6
+    resource_class: small
+    steps:
+      - checkout
+      - run:
+          name: Check that every file has a licence
+          command: reuse lint
+
+  ci:
+    docker:
+      - image: debian:trixie-slim
+    resource_class: small
+    steps:
+      - run:
+          name: Every other job passed
+          command: "true"
+
+# Pull requests, merges and the schedules each have a workflow, which run the same Linux jobs. A
+# pull request's pipelines run on its own branch. Merging it closes it, which starts a pipeline on
+# the branch it merged into. Pull requests and Monday's schedule add the Windows job, which `ci`
+# then requires too.
+workflows:
+  pull-request:
+    when:
+      and:
+        - not: &scheduled
+            equal: [schedule, << pipeline.event.name >>]
+        - not: &closed
+            equal: [closed, << pipeline.event.action >>]
+        - not: &develop-or-main
+            or:
+              - equal: [main, << pipeline.git.branch >>]
+              - equal: [develop, << pipeline.git.branch >>]
+    jobs: &with-windows
+      - image: &image
+          context: ghcr
+      - linux: &gcc-debug
+          name: gcc-debug
+          preset: gcc-debug
+          requires: [image]
+      - linux: &gcc-release
+          name: gcc-release
+          preset: gcc-release
+          requires: [image]
+      - linux: &clang-debug
+          name: clang-debug
+          preset: clang-debug
+          requires: [image]
+      - linux: &clang-release
+          name: clang-release
+          preset: clang-release
+          requires: [image]
+      - linux: &clang-asan
+          name: clang-asan
+          preset: clang-asan
+          requires: [image]
+      - linux: &clang-rtsan
+          name: clang-rtsan
+          preset: clang-rtsan
+          requires: [image]
+      - linux-tsan: &clang-tsan
+          name: clang-tsan
+          requires: [image]
+      # It installs no ports, so a cache it saved would be empty and would stand in for the others'.
+      - linux: &gcc-libirama
+          name: gcc-libirama
+          preset: gcc-libirama
+          tests: false
+          restore-only: true
+          requires: [image]
+      # The same holds for lint, which builds only the formatting and documentation checks.
+      - linux: &lint
+          name: lint
+          preset: lint
+          tests: false
+          restore-only: true
+          requires: [image]
+      - linux: &tidy
+          name: tidy
+          preset: tidy
+          tests: false
+          requires: [image]
+      - windows
+      - reuse
+      - ci:
+          requires:
+            - image
+            - gcc-debug
+            - gcc-release
+            - clang-debug
+            - clang-release
+            - clang-asan
+            - clang-tsan
+            - clang-rtsan
+            - gcc-libirama
+            - lint
+            - tidy
+            - windows
+            - reuse
+
+  merge:
+    when:
+      and:
+        - *closed
+        - *develop-or-main
+    jobs: &linux
+      - image: *image
+      - linux: *gcc-debug
+      - linux: *gcc-release
+      - linux: *clang-debug
+      - linux: *clang-release
+      - linux: *clang-asan
+      - linux: *clang-rtsan
+      - linux-tsan: *clang-tsan
+      - linux: *gcc-libirama
+      - linux: *lint
+      - linux: *tidy
+      - reuse
+      - ci:
+          requires:
+            - image
+            - gcc-debug
+            - gcc-release
+            - clang-debug
+            - clang-release
+            - clang-asan
+            - clang-tsan
+            - clang-rtsan
+            - gcc-libirama
+            - lint
+            - tidy
+            - reuse
+
+  schedule:
+    when:
+      and:
+        - *scheduled
+        - not: << pipeline.parameters.windows >>
+    jobs: *linux
+
+  monday-schedule:
+    when:
+      and:
+        - *scheduled
+        - << pipeline.parameters.windows >>
+    jobs: *with-windows

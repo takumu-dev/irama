@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: 2026 takumu-dev
+# SPDX-License-Identifier: Zlib
+
+---
+# irama.h is C, compiled as C99 and as C++11 or newer, so it follows C's naming, and the checks that
+# would have it use what only C++ has are off: `using`, `enum class`, `std::array`, an enumeration's
+# underlying type, and constants in place of macros.
+InheritParentConfig: true
+Checks:
+  - -modernize-*
+  - -cppcoreguidelines-avoid-c-arrays
+  - -cppcoreguidelines-macro-to-enum
+  - -cppcoreguidelines-macro-usage
+  - -cppcoreguidelines-use-enum-class
+  - -performance-enum-size
+CheckOptions:
+  # irama_* types and functions, IRAMA_* enumerators and macros, since C has no namespaces.
+  readability-identifier-naming.FunctionCase: lower_case
+  readability-identifier-naming.FunctionPrefix: irama_
+  readability-identifier-naming.StructCase: lower_case
+  readability-identifier-naming.StructPrefix: irama_
+  readability-identifier-naming.UnionCase: lower_case
+  readability-identifier-naming.UnionPrefix: irama_
+  readability-identifier-naming.EnumCase: lower_case
+  readability-identifier-naming.EnumPrefix: irama_
+  readability-identifier-naming.TypedefCase: lower_case
+  readability-identifier-naming.TypedefPrefix: irama_
+  readability-identifier-naming.EnumConstantCase: UPPER_CASE
+  readability-identifier-naming.EnumConstantPrefix: IRAMA_
+  readability-identifier-naming.MacroDefinitionCase: UPPER_CASE
+  readability-identifier-naming.MacroDefinitionPrefix: IRAMA_
+...

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "irama",
+  "description": "A music tracker with built-in synthesisers, and the library that plays its songs",
+  "homepage": "https://github.com/takumu-dev/irama",
+  "license": "Zlib AND GPL-3.0-or-later",
+  "builtin-baseline": "bf19794383e8fb95eba5aa553235bc8ec2271688",
+  "dependencies": [],
+  "features": {
+    "cli": {
+      "description": "What irama-cli needs"
+    },
+    "tests": {
+      "description": "What the tests need, and nothing that ships",
+      "dependencies": [
+        {
+          "name": "catch2",
+          "version>=": "3.0.1"
+        },
+        "drlibs"
+      ]
+    }
+  }
+}

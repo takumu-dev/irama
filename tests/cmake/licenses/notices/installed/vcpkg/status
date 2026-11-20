@@ -1,0 +1,51 @@
+Package: vcpkg-cmake
+Version: 2025-08-07
+Architecture: x64-linux
+Status: install ok installed
+
+Package: flacish
+Version: 2026-03-03
+Architecture: x64-linux
+Status: install ok installed
+
+Package: fmtish
+Version: 12.1.0
+Port-Version: 1
+Depends: vcpkg-cmake
+Architecture: x64-linux
+Description: A formatting library; [brackets] and semicolons; in a description
+Status: install ok installed
+
+Package: argsish
+Version: 3.2.1
+Depends: fmtish, vcpkg-cmake
+Architecture: x64-linux
+Status: install ok installed
+
+Package: pngish
+Version: 1.6.59
+Architecture: x64-linux
+Status: install ok installed
+
+Package: windowish
+Version: 3.4.18
+Depends: vcpkg-cmake
+Architecture: x64-linux
+Status: install ok installed
+
+Package: windowish
+Feature: images
+Depends: fmtish, pngish
+Architecture: x64-linux
+Status: install ok installed
+
+Package: test-framework
+Version: 3.16.0
+Depends: vcpkg-cmake
+Architecture: x64-linux
+Status: install ok installed
+
+Package: oldish
+Version: 1.0
+Architecture: x64-linux
+Status: purge ok not-installed

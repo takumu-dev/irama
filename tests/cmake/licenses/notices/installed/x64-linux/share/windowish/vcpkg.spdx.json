@@ -1,0 +1,10 @@
+{
+  "packages": [
+    {
+      "name": "windowish",
+      "SPDXID": "SPDXRef-port",
+      "versionInfo": "3.4.18",
+      "licenseConcluded": "Zlib AND MIT"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "packages": [
+    {
+      "name": "argsish",
+      "SPDXID": "SPDXRef-port",
+      "versionInfo": "3.2.1",
+      "licenseConcluded": "MIT",
+      "homepage": "https://example.com/argsish"
+    }
+  ]
+}

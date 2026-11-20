@@ -1,0 +1,10 @@
+{
+  "packages": [
+    {
+      "name": "test-framework",
+      "SPDXID": "SPDXRef-port",
+      "versionInfo": "3.16.0",
+      "licenseConcluded": "BSL-1.0"
+    }
+  ]
+}

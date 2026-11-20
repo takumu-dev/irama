@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: 2026 takumu-dev
+# SPDX-License-Identifier: Zlib
+
+# Licences of the files that can't hold a comment.
+version = 1
+
+[[annotations]]
+path = [
+    "CMakePresets.json",
+    "vcpkg.json",
+    "vcpkg-configuration.json",
+    "ports/*/vcpkg.json",
+    "cmake/licenses.json",
+]
+SPDX-FileCopyrightText = "2026 takumu-dev"
+SPDX-License-Identifier = "Zlib"
+
+# Files that quote third-party notices, which aren't their own: the generated notices, and the
+# made-up ports of the licence check's tests.
+[[annotations]]
+path = ["THIRD_PARTY_NOTICES.md", "tests/cmake/licenses/**"]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 takumu-dev"
+SPDX-License-Identifier = "Zlib"
+
+# The golden WAV files, which irama-cli wrote.
+[[annotations]]
+path = ["tests/golden/*.wav"]
+SPDX-FileCopyrightText = "2026 takumu-dev"
+SPDX-License-Identifier = "Zlib"
