@@ -228,6 +228,9 @@ departs from them, it says so.
   after writing one line to stderr that matches the expected report, or RealtimeSanitizer stops it
   for the C library call the test names, or, for a check that is compiled out, the program exits 0
   quietly. Such a test carries the `abort` label, and every other test the `unit` label.
+- A test's helper that hands a list of arguments to a CMake script through `add_test()` writes each
+  separator as `$<SEMICOLON>`. A separator escaped as `\;` reaches the script with its backslash,
+  and the list arrives as one argument.
 - Every Catch2 program runs from `tests/catch_main.cpp`, not Catch2's own main. It turns off MSVC's
   abort dialog, as irama-cli's main and the programs under `tests/abort/` do, so a test that aborts
   fails at once rather than wait for a click.

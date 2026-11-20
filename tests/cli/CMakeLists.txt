@@ -8,8 +8,9 @@
 function(irama_add_cli_test name)
     cmake_parse_arguments(PARSE_ARGV 1 arg "" "EXPECTED" "ARGUMENTS")
     set(test_name "cli: ${name}")
-    # Escaped, so the list reaches the script as one definition.
-    string(REPLACE ";" "\\;" arguments "${arg_ARGUMENTS}")
+    # Each separator written as a generator expression, so that add_test() keeps the list as one
+    # argument, and the script gets it with plain separators.
+    string(REPLACE ";" "$<SEMICOLON>" arguments "${arg_ARGUMENTS}")
     add_test(NAME "${test_name}"
         COMMAND "${CMAKE_COMMAND}"
             "-DPROGRAM=$<TARGET_FILE:irama-cli>"
