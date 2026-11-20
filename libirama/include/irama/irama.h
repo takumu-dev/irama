@@ -15,7 +15,7 @@
 
 /// The minor part of the version of libirama this header belongs to. It changes when a release
 /// adds to the API without breaking it.
-#define IRAMA_VERSION_MINOR 0
+#define IRAMA_VERSION_MINOR 1
 
 /// The patch part of the version of libirama this header belongs to. It changes when a release
 /// only fixes bugs.
