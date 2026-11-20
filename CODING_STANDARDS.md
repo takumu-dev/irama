@@ -81,12 +81,24 @@ departs from them, it says so.
   differently from CI's, CI's image decides.
 - `.editorconfig` gives every other file its indentation and line endings.
 
-## Errors and exceptions
+## Errors and assertions
 
 - A failure that correct code can meet is returned as a value: the function returns
   `[[nodiscard]] std::expected<T, E>`, and its caller checks it before reading it. This departs from
   the Core Guidelines' E.2. Constructors never fail: anything that can fail to come into being is
   made by a factory function.
+- A broken precondition is a bug, not an error, so libirama's C++ code checks preconditions with
+  assertions from `<irama/engine/base/assertion.hpp>`, never with error values.
+  `IRAMA_ASSERT(condition, message)` checks a cheap precondition in every build, release included.
+  `IRAMA_DEBUG_ASSERT(condition, message)` checks an internal invariant or an expensive condition,
+  and checks nothing where `NDEBUG` is defined, so the build configuration that a game already sets
+  decides. No CMake option switches either one.
+- The message says why the condition must hold, as a string literal: "a square has four sides".
+- A failed assertion writes one line to stderr, with the file and line, the condition and the
+  message, and aborts, on any thread. There is no handler to replace and no log. The program is
+  ending, so the report may break the real-time rules: it turns RealtimeSanitizer off while it
+  writes. `IRAMA_ASSERT` may run on the audio thread, and an expensive check there uses
+  `IRAMA_DEBUG_ASSERT`.
 - No `throw`, `try` or `catch` in libirama or its tests. libirama's components build their own
   sources without exceptions or RTTI in every build, so a stray `throw` or `dynamic_cast` fails
   everywhere, not only in one configuration.
@@ -104,6 +116,9 @@ departs from them, it says so.
 - `T*` and `T&` never own.
 - Counts and container indices are `std::size_t`, departing from the Core Guidelines' ES.107.
   Signed types are for arithmetic that can go negative.
+- Every narrowing integer conversion, a change of signedness included, goes through
+  `irama::narrow<To>(value)` from `<irama/engine/base/narrow.hpp>`. It asserts that the value fits,
+  rather than let it wrap silently.
 - A plain struct gives each member an initialiser, so that a designated initialiser may leave any
   of them out.
 
@@ -169,9 +184,15 @@ departs from them, it says so.
   `irama.h` compiles as C99 is the one C source among them, `irama_h_c99_tests.c`, a program of its
   own registered with CTest under the `capi` name. MSVC has no C99 mode, so it builds that file as
   C11.
+- An assertion ends the program, so a Catch2 test case can't watch one fail. Each check that must
+  abort is a case of a small program under `tests/abort/`, added with `irama_add_abort_test()`,
+  which runs it through `cmake/expect_abort.cmake`. The script passes only if the program aborts
+  after writing one line to stderr that matches the expected report, or, for a check that is
+  compiled out, exits 0 quietly. Such a test carries the `abort` label, and every other test the
+  `unit` label.
 - Every Catch2 program runs from `tests/catch_main.cpp`, not Catch2's own main. It turns off MSVC's
-  abort dialog, as irama-cli's main does, so a test that aborts fails at once rather than wait for a
-  click.
+  abort dialog, as irama-cli's main and the programs under `tests/abort/` do, so a test that aborts
+  fails at once rather than wait for a click.
 
 ## Commits and branches
 

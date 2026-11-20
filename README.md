@@ -61,9 +61,10 @@ subproject gets the same, since the switches are off there by default.
 ## Tests
 
 The tests run with each workflow preset, or alone with `ctest --preset <preset>`. Every test carries
-one CTest label: `unit`, for Catch2 test cases and for checks run through CMake. Each test's name
-begins with what it tests: a libirama component such as `capi`, `cli` for irama-cli, or `build` for
-the configuration itself.
+one CTest label: `abort`, for the checks that end the program, which run through
+`cmake/expect_abort.cmake`, or `unit`, for Catch2 test cases and the other checks run through CMake.
+Each test's name begins with what it tests: a libirama component such as `base` or `capi`, `cli`
+for irama-cli, or `build` for the configuration itself.
 
 ## Contributing
 

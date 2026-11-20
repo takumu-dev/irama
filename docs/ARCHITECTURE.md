@@ -31,11 +31,11 @@ exceptions or RTTI.
 
 | Component | What it holds | Links |
 |---|---|---|
-| `capi` | The C API: `irama.h` and its implementation. | nothing |
+| `base` | Assertions, `irama::narrow`, and the `IRAMA_NONBLOCKING` mark. | nothing |
+| `capi` | The C API: `irama.h` and its implementation. | `base` |
 
-`irama::engine` links every component but `capi`, which leaves it empty while `capi` is the only
-component. Nothing links `capi`: it sits on top of the other components, and its only public header
-is `irama.h`, which is C.
+`irama::engine` links every component but `capi`. Nothing links `capi`: it sits on top of the other
+components, and its only public header is `irama.h`, which is C.
 
 Once the whole project is configured, `irama_check_link_closure()` checks what every target under
 `libirama/` links. A libirama target may link other libirama targets, and the imported targets that
@@ -89,7 +89,8 @@ The tests check that all of these agree.
 | `cmake/check_licenses.cmake`, `cmake/licenses.json` | The licence check, and its allowlists. |
 | `cmake/IramaLint.cmake` | The formatting, clang-tidy and documentation checks. |
 | `.clang-format`, `.clang-tidy`, `Doxyfile` | The settings of those checks. |
-| `tests/` | The tests, one folder per component under `unit/`, and the CLI and configuration checks. |
+| `cmake/expect_abort.cmake` | Runs a program that must abort, and checks its report. |
+| `tests/` | The tests, one folder per component under `unit/`, the programs that must abort under `abort/`, and the CLI and configuration checks. |
 | `ci/` | The CI's Linux image, under `linux/`, and the Windows job's scripts, under `windows/`. |
 | `THIRD_PARTY_NOTICES.md` | The notices of the libraries the applications ship. |
 | `REUSE.toml`, `LICENSES/` | The licences of files that can't hold a comment, and their texts. |

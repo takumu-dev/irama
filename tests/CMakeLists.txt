@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: 2026 takumu-dev
 # SPDX-License-Identifier: Zlib
 
-# Irama's tests. Each one carries exactly one CTest label: `unit` for Catch2 test cases and for the
+# Irama's tests. Each one carries exactly one CTest label: `abort` for the checks that end the
+# program, run through cmake/expect_abort.cmake, and `unit` for Catch2 test cases and the other
 # checks run through CMake. Each test's name begins with the component it tests, matching the tag on
 # its Catch2 test case, or with the part it tests: `build` for the configuration and `cli` for
 # irama-cli.
@@ -33,7 +34,9 @@ function(irama_add_tests component)
     )
 endfunction()
 
+add_subdirectory(abort)
 add_subdirectory(cmake)
+add_subdirectory(unit/base)
 add_subdirectory(unit/capi)
 
 if(IRAMA_BUILD_CLI)
