@@ -38,6 +38,7 @@ add_subdirectory(abort)
 add_subdirectory(cmake)
 add_subdirectory(unit/base)
 add_subdirectory(unit/capi)
+add_subdirectory(unit/wav)
 
 if(IRAMA_BUILD_CLI)
     add_subdirectory(cli)

@@ -33,6 +33,7 @@ exceptions or RTTI.
 |---|---|---|
 | `base` | Assertions, `irama::narrow`, the `IRAMA_NONBLOCKING` mark, the render scope with the real-time guard, and the single-producer, single-consumer queue. | nothing |
 | `capi` | The C API: `irama.h` and its implementation. | `base` |
+| `wav` | The WAV writer, which irama-cli and the tests share. | `base` |
 
 `irama::engine` links every component but `capi`. Nothing links `capi`: it sits on top of the other
 components, and its only public header is `irama.h`, which is C.
@@ -69,6 +70,14 @@ thread to one consumer thread, either of which may be the audio thread. A push o
 nothing and never waits; it reports a full or empty queue at once. Its tests push and pop inside a
 render scope, so the checks above watch them, and a stress test passes messages between two threads,
 which **ThreadSanitizer**, in `clang-tsan`, watches for races.
+
+## The WAV writer
+
+`irama::WavWriter`, in `<irama/engine/wav/wav_writer.hpp>`, writes interleaved 32-bit float samples
+to a WAV file, as WAV's IEEE float format with a `fact` chunk. It writes through `<cstdio>` and
+allocates nothing itself, though the C library may buffer the file. It writes a header for no
+samples when it opens the file, and the real lengths when `finish()` closes it. It is part of the
+internal C++ API, not of `irama.h`. Nothing in libirama reads WAV files.
 
 ## Dependencies
 
