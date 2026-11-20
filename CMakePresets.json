@@ -142,6 +142,17 @@
       }
     },
     {
+      "name": "clang-tsan",
+      "inherits": ["clang", "debug"],
+      "displayName": "Clang, debug, ThreadSanitizer",
+      "description": "libirama, irama-cli and the tests are instrumented. The dependencies aren't, and none of them makes threads that the tests use.",
+      "cacheVariables": {
+        "CMAKE_C_FLAGS": "-fsanitize=thread",
+        "CMAKE_CXX_FLAGS": "-fsanitize=thread",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread"
+      }
+    },
+    {
       "name": "clang-rtsan",
       "inherits": ["clang", "debug"],
       "displayName": "Clang, debug, RealtimeSanitizer",
@@ -193,6 +204,7 @@
     { "name": "msvc-debug", "configurePreset": "msvc-debug" },
     { "name": "msvc-release", "configurePreset": "msvc-release" },
     { "name": "clang-asan", "configurePreset": "clang-asan" },
+    { "name": "clang-tsan", "configurePreset": "clang-tsan" },
     { "name": "clang-rtsan", "configurePreset": "clang-rtsan" },
     { "name": "gcc-libirama", "configurePreset": "gcc-libirama" },
     { "name": "lint", "configurePreset": "lint", "targets": ["check-format", "docs"] },
@@ -217,6 +229,7 @@
     { "name": "msvc-debug", "inherits": "test", "configurePreset": "msvc-debug" },
     { "name": "msvc-release", "inherits": "test", "configurePreset": "msvc-release" },
     { "name": "clang-asan", "inherits": "test", "configurePreset": "clang-asan" },
+    { "name": "clang-tsan", "inherits": "test", "configurePreset": "clang-tsan" },
     { "name": "clang-rtsan", "inherits": "test", "configurePreset": "clang-rtsan" }
   ],
   "workflowPresets": [
@@ -274,6 +287,14 @@
         { "type": "configure", "name": "clang-asan" },
         { "type": "build", "name": "clang-asan" },
         { "type": "test", "name": "clang-asan" }
+      ]
+    },
+    {
+      "name": "clang-tsan",
+      "steps": [
+        { "type": "configure", "name": "clang-tsan" },
+        { "type": "build", "name": "clang-tsan" },
+        { "type": "test", "name": "clang-tsan" }
       ]
     },
     {

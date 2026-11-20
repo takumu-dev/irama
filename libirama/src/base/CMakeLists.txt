@@ -8,6 +8,7 @@ irama_add_component(base
         include/irama/engine/base/narrow.hpp
         include/irama/engine/base/nonblocking.hpp
         include/irama/engine/base/render_scope.hpp
+        include/irama/engine/base/spsc_queue.hpp
     SOURCES
         assertion.cpp
         realtime_sanitizer.hpp

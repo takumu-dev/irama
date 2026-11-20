@@ -31,7 +31,7 @@ exceptions or RTTI.
 
 | Component | What it holds | Links |
 |---|---|---|
-| `base` | Assertions, `irama::narrow`, the `IRAMA_NONBLOCKING` mark, and the render scope with the real-time guard. | nothing |
+| `base` | Assertions, `irama::narrow`, the `IRAMA_NONBLOCKING` mark, the render scope with the real-time guard, and the single-producer, single-consumer queue. | nothing |
 | `capi` | The C API: `irama.h` and its implementation. | `base` |
 
 `irama::engine` links every component but `capi`. Nothing links `capi`: it sits on top of the other
@@ -62,6 +62,13 @@ nest and only the rendering thread is watched. It also carries `IRAMA_NONBLOCKIN
 The programs under `tests/abort/` prove both: `new` or `delete` inside a render scope ends with the
 guard's report where it is compiled in, with RealtimeSanitizer's under `clang-rtsan`, and goes
 unchecked elsewhere, while `new` outside a scope, or on a thread that isn't rendering, is allowed.
+
+Threads talk to the audio thread only through `irama::SpscQueue`, in
+`<irama/engine/base/spsc_queue.hpp>`: a fixed ring of trivially copyable messages from one producer
+thread to one consumer thread, either of which may be the audio thread. A push or a pop allocates
+nothing and never waits; it reports a full or empty queue at once. Its tests push and pop inside a
+render scope, so the checks above watch them, and a stress test passes messages between two threads,
+which **ThreadSanitizer**, in `clang-tsan`, watches for races.
 
 ## Dependencies
 
@@ -111,6 +118,6 @@ The tests check that all of these agree.
 | `.clang-format`, `.clang-tidy`, `Doxyfile` | The settings of those checks. |
 | `cmake/expect_abort.cmake` | Runs a program that must abort, and checks its report. |
 | `tests/` | The tests, one folder per component under `unit/`, the programs that must abort under `abort/`, and the CLI and configuration checks. |
-| `ci/` | The CI's Linux image, under `linux/`, and the Windows job's scripts, under `windows/`. |
+| `ci/` | The CI's Linux image, under `linux/`, the Windows job's scripts, under `windows/`, and the scripts the Linux jobs share. |
 | `THIRD_PARTY_NOTICES.md` | The notices of the libraries the applications ship. |
 | `REUSE.toml`, `LICENSES/` | The licences of files that can't hold a comment, and their texts. |
