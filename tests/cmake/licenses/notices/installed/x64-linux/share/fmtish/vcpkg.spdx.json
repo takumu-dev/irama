@@ -1,0 +1,11 @@
+{
+  "packages": [
+    {
+      "name": "fmtish",
+      "SPDXID": "SPDXRef-port",
+      "versionInfo": "12.1.0#1",
+      "licenseConcluded": "MIT",
+      "homepage": "https://example.com/fmtish"
+    }
+  ]
+}

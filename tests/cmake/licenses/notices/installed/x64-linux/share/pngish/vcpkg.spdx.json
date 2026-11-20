@@ -1,0 +1,11 @@
+{
+  "packages": [
+    {
+      "name": "pngish",
+      "SPDXID": "SPDXRef-port",
+      "versionInfo": "1.6.59",
+      "licenseConcluded": "Zlib",
+      "homepage": "https://example.com/pngish"
+    }
+  ]
+}

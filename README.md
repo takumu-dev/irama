@@ -61,7 +61,7 @@ subproject gets the same, since the switches are off there by default.
 ## Tests
 
 The tests run with each workflow preset, or alone with `ctest --preset <preset>`. Every test carries
-one CTest label: `unit`, for Catch2 test cases and for checks run as CMake scripts. Each test's name
+one CTest label: `unit`, for Catch2 test cases and for checks run through CMake. Each test's name
 begins with what it tests: a libirama component such as `capi`, `cli` for irama-cli, or `build` for
 the configuration itself.
 
@@ -95,6 +95,7 @@ twice a week:
 - vcpkg's binaries are cached per image tag, manifest and presets. Linux jobs on `develop` save the
   cache after passing, and pull requests restore it. The Windows job, keyed on the manifest and
   presets alone, saves its cache from any branch once both presets pass.
+- The `reuse` job runs `reuse lint` in the FSF's `fsfe/reuse` image, pinned by digest.
 - The jobs fan into one check, `ci/circleci: ci`.
 
 Some settings live outside the repository:
@@ -115,3 +116,8 @@ The repository follows [REUSE](https://reuse.software): every file names its cop
 licence, in its first lines or in `REUSE.toml`, and the licence texts are in `LICENSES/`.
 Everything under `cli/` is GPL-3.0-or-later. Everything else, libirama, the tests and the build
 files included, is zlib.
+
+Every configuration checks the licences of the dependencies vcpkg installed, against the
+allowlists in `cmake/licenses.json`: a strict one for libirama, and a wider one for everything else.
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) holds the notices of the libraries irama-cli
+ships. Build the `notices` target of any preset that builds irama-cli to bring it up to date.

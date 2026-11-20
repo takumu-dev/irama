@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Zlib
 
 # Irama's tests. Each one carries exactly one CTest label: `unit` for Catch2 test cases and for the
-# checks run as scripts. Each test's name begins with the component it tests, matching the tag on
+# checks run through CMake. Each test's name begins with the component it tests, matching the tag on
 # its Catch2 test case, or with the part it tests: `build` for the configuration and `cli` for
 # irama-cli.
 

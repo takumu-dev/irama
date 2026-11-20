@@ -1,0 +1,21 @@
+{
+  "libirama": ["Zlib", "MIT-0", "Unlicense", "CC0-1.0"],
+  "applications": [
+    "Zlib",
+    "MIT",
+    "MIT-0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "ISC",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "CC0-1.0",
+    "Unlicense"
+  ],
+  "fonts": {
+    "licenses": ["OFL-1.1"],
+    "ports": []
+  },
+  "overrides": []
+}

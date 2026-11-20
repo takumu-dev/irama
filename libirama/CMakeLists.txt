@@ -8,3 +8,9 @@ add_library(irama_engine INTERFACE)
 add_library(irama::engine ALIAS irama_engine)
 
 add_subdirectory(src/capi)
+
+# The imported targets that libirama may link: those of its own dependencies, at the top level of
+# vcpkg.json, and nothing else. It has none. Once the whole project is configured, any other link
+# from a libirama target stops the configuration.
+set(irama_libirama_imports "")
+irama_check_link_closure(${irama_libirama_imports})
