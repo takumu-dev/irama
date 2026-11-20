@@ -16,7 +16,6 @@
 #include <irama/engine/base/narrow.hpp>
 #include <irama/engine/base/nonblocking.hpp>
 
-#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -58,12 +57,13 @@ constexpr std::array checks{
 };
 
 int run(std::string_view name) {
-    const auto* const found = std::ranges::find(checks, name, &NamedCheck::name);
-    if (found == checks.end()) {
-        return usage_error;
+    for (const auto& named : checks) {
+        if (named.name == name) {
+            named.check(3);
+            return EXIT_SUCCESS;
+        }
     }
-    found->check(3);
-    return EXIT_SUCCESS;
+    return usage_error;
 }
 
 } // namespace
