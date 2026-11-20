@@ -95,6 +95,7 @@ twice a week:
 - vcpkg's binaries are cached per image tag, manifest and presets. Linux jobs on `develop` save the
   cache after passing, and pull requests restore it. The Windows job, keyed on the manifest and
   presets alone, saves its cache from any branch once both presets pass.
+- The `reuse` job runs `reuse lint` in the FSF's `fsfe/reuse` image, pinned by digest.
 - The jobs fan into one check, `ci/circleci: ci`.
 
 Some settings live outside the repository:

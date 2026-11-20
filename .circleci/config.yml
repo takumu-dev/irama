@@ -234,6 +234,19 @@ jobs:
       - store_artifacts:
           path: logs
 
+  # Every file names its copyright holder and licence, as REUSE asks, in its first lines or in
+  # REUSE.toml. The FSF's image, pinned by digest, has reuse, and the git and ssh that checkout
+  # needs.
+  reuse:
+    docker:
+      - image: fsfe/reuse:6.3.0@sha256:2748d04c2adeb747c9a44831bc99a9cbfd7bf7ff6fc371a4b63204944e3e47b6
+    resource_class: small
+    steps:
+      - checkout
+      - run:
+          name: Check that every file has a licence
+          command: reuse lint
+
   ci:
     docker:
       - image: debian:trixie-slim
@@ -298,6 +311,7 @@ workflows:
           tests: false
           requires: [image]
       - windows
+      - reuse
       - ci:
           requires:
             - image
@@ -309,6 +323,7 @@ workflows:
             - lint
             - tidy
             - windows
+            - reuse
 
   merge:
     when:
@@ -324,6 +339,7 @@ workflows:
       - linux: *gcc-libirama
       - linux: *lint
       - linux: *tidy
+      - reuse
       - ci:
           requires:
             - image
@@ -334,6 +350,7 @@ workflows:
             - gcc-libirama
             - lint
             - tidy
+            - reuse
 
   schedule:
     when:
