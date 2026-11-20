@@ -33,6 +33,11 @@ foreach(part IN ITEMS cli tests)
     endif()
 endforeach()
 
+# The real-time guard stops the program when code inside a render call allocates or frees memory. It
+# replaces the global operator new and operator delete of every program that renders, so only the
+# debug presets turn it on, and never a game's build.
+option(IRAMA_REALTIME_GUARD "Stop the program when a render call allocates or frees memory." OFF)
+
 project(irama
     VERSION "${irama_version_MAJOR}.${irama_version_MINOR}.${irama_version_PATCH}"
     DESCRIPTION "A music tracker with built-in synthesisers"

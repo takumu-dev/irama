@@ -3,18 +3,11 @@
 
 #include <irama/engine/base/assertion.hpp>
 
+#include "realtime_sanitizer.hpp"
+
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
-
-// RealtimeSanitizer's header comes with the sanitizer, so it is included only in a build that has
-// it on. Compilers without __has_feature have no RealtimeSanitizer.
-#ifdef __has_feature
-#if __has_feature(realtime_sanitizer)
-#define IRAMA_REALTIME_SANITIZER
-#include <sanitizer/rtsan_interface.h>
-#endif
-#endif
 
 namespace irama::detail {
 

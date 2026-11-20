@@ -94,7 +94,10 @@
     {
       "name": "gcc-debug",
       "inherits": ["gcc", "debug"],
-      "displayName": "GCC, debug"
+      "displayName": "GCC, debug",
+      "cacheVariables": {
+        "IRAMA_REALTIME_GUARD": true
+      }
     },
     {
       "name": "gcc-release",
@@ -104,7 +107,10 @@
     {
       "name": "clang-debug",
       "inherits": ["clang", "debug"],
-      "displayName": "Clang with libstdc++, debug"
+      "displayName": "Clang with libstdc++, debug",
+      "cacheVariables": {
+        "IRAMA_REALTIME_GUARD": true
+      }
     },
     {
       "name": "clang-release",
@@ -114,7 +120,10 @@
     {
       "name": "msvc-debug",
       "inherits": ["msvc", "debug"],
-      "displayName": "MSVC, debug"
+      "displayName": "MSVC, debug",
+      "cacheVariables": {
+        "IRAMA_REALTIME_GUARD": true
+      }
     },
     {
       "name": "msvc-release",
@@ -171,7 +180,8 @@
       "cacheVariables": {
         "IRAMA_BUILD_CLI": true,
         "IRAMA_BUILD_TESTS": true,
-        "IRAMA_CLANG_TIDY": true
+        "IRAMA_CLANG_TIDY": true,
+        "IRAMA_REALTIME_GUARD": true
       }
     }
   ],

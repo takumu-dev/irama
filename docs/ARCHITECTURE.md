@@ -31,7 +31,7 @@ exceptions or RTTI.
 
 | Component | What it holds | Links |
 |---|---|---|
-| `base` | Assertions, `irama::narrow`, and the `IRAMA_NONBLOCKING` mark. | nothing |
+| `base` | Assertions, `irama::narrow`, the `IRAMA_NONBLOCKING` mark, and the render scope with the real-time guard. | nothing |
 | `capi` | The C API: `irama.h` and its implementation. | `base` |
 
 `irama::engine` links every component but `capi`. Nothing links `capi`: it sits on top of the other
@@ -42,6 +42,26 @@ Once the whole project is configured, `irama_check_link_closure()` checks what e
 `libirama/CMakeLists.txt` lists, which are those of libirama's own dependencies at the top level of
 `vcpkg.json`. Any other link stops the configuration, naming it. The list is fixed, rather than
 taken from each component's `PACKAGES`, so that no component can admit a package by declaring it.
+
+## Real-time checks
+
+Code that a render call runs must not allocate, lock, wait or do I/O. A render entry point holds an
+`irama::RenderScope` for as long as it runs, a count of open scopes kept for each thread, so scopes
+nest and only the rendering thread is watched. It also carries `IRAMA_NONBLOCKING`, which is
+`[[clang::nonblocking]]` on Clang. Two checks share that boundary:
+
+- **The real-time guard**, compiled in by the CMake option `IRAMA_REALTIME_GUARD`, replaces all 20
+  forms of the global `operator new` and `operator delete`. Inside a render scope they write one
+  line to stderr and abort; elsewhere they allocate with `malloc`, or `_aligned_malloc` on Windows
+  for the aligned forms. The operators sit in `libirama/src/base/render_scope.cpp`, beside the
+  scope's constructor, so any program that opens a scope links them. The option is on in the three
+  `*-debug` presets and `tidy`, and off by default, so a game's build keeps its own allocator.
+- **RealtimeSanitizer**, in `clang-rtsan`, stops the program at the first allocation, lock, system
+  call or other unsafe call inside any `IRAMA_NONBLOCKING` function.
+
+The programs under `tests/abort/` prove both: `new` or `delete` inside a render scope ends with the
+guard's report where it is compiled in, with RealtimeSanitizer's under `clang-rtsan`, and goes
+unchecked elsewhere, while `new` outside a scope, or on a thread that isn't rendering, is allowed.
 
 ## Dependencies
 
@@ -79,7 +99,7 @@ The tests check that all of these agree.
 
 | Folder or file | What it holds |
 |---|---|
-| `CMakeLists.txt` | The project, the part switches, and the version read from `irama.h`. |
+| `CMakeLists.txt` | The project, the part switches, the real-time guard's switch, and the version read from `irama.h`. |
 | `CMakePresets.json` | Every supported configuration, each with a workflow preset. |
 | `vcpkg.json` | The dependencies: libirama's at the top level, each other part's as a feature. |
 | `cmake/IramaFloors.cmake` | The compiler, libstdc++ and checking tool floor checks. |
