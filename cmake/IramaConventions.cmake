@@ -44,6 +44,11 @@ function(irama_target_warnings target)
             $<${cxx}:-Woverloaded-virtual>
         )
     endif()
+    # Clang checks each `///` comment against the declaration it documents, such as a \param
+    # naming no parameter.
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        target_compile_options(${target} PRIVATE -Wdocumentation)
+    endif()
 endfunction()
 
 # Builds the target's own sources without exceptions or RTTI, as libirama's are in every build, so

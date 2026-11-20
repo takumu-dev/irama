@@ -14,7 +14,7 @@ namespace {
 constexpr int usage_error = 2;
 
 int run(std::span<char*> arguments) {
-    if (arguments.size() == 2 && std::string_view{arguments[1]} == "--version") {
+    if (arguments.size() == 2 && std::string_view{arguments.back()} == "--version") {
         std::println("irama-cli {}", IRAMA_VERSION_STRING);
         return 0;
     }
@@ -25,6 +25,5 @@ int run(std::span<char*> arguments) {
 } // namespace
 } // namespace irama_cli
 
-int main(int argc, char** argv) {
-    return irama_cli::run({argv, static_cast<std::size_t>(argc)});
-}
+// NOLINTNEXTLINE(bugprone-exception-escape): nothing is caught, so a failure ends the program.
+int main(int argc, char** argv) { return irama_cli::run({argv, static_cast<std::size_t>(argc)}); }

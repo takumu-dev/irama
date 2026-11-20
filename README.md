@@ -21,6 +21,8 @@ A music tracker with built-in synthesisers. The repository holds two parts:
 | GCC, on Linux | 16 |
 | Clang, on Linux | 23 |
 | libstdc++, under either Linux compiler | 16 |
+| clang-format and clang-tidy, for the checks | 23 |
+| Doxygen, for the checks | 1.18 |
 
 Configuring with anything older stops with a message naming the version needed. Both Linux
 compilers build against libstdc++. Ninja and [vcpkg](https://vcpkg.io) are needed too: every
@@ -41,6 +43,8 @@ cmake --workflow --preset gcc-debug
 | `gcc-debug`, `gcc-release` | GCC |
 | `clang-debug`, `clang-release` | Clang with libstdc++ |
 | `gcc-libirama` | GCC, libirama alone, built but not tested |
+| `lint` | The formatting, with clang-format, and the documentation, with Doxygen |
+| `tidy` | Clang, every part built with clang-tidy |
 
 Each preset builds into `build/<preset>/`. Warnings are errors in every preset. Machine-specific
 settings, such as `VCPKG_ROOT` or a compiler under another name, belong in a
@@ -60,6 +64,9 @@ the configuration itself.
 
 ## Contributing
 
+[`CODING_STANDARDS.md`](CODING_STANDARDS.md) says how the code is written. Build the `format` target
+of any preset to format the sources as the `lint` preset checks them.
+
 Changes reach `develop` and `main` only through pull requests, merged with a merge commit, following
 git flow: feature branches into `develop`, and release and hotfix branches into `main` and back into
 `develop`.
@@ -69,8 +76,9 @@ twice a week:
 
 - Each Linux preset runs as its own job, `cmake --workflow --preset <preset>`, in the image built
   from `ci/linux/`: Docker's official GCC 16 image, with Clang 23 from apt.llvm.org pointed at
-  GCC 16's libstdc++, and CMake 4.4. The image is public, as `ghcr.io/takumu-dev/irama-ci`, tagged
-  with the hash that `ci/image-tag.sh` prints, so CI's compilers are one `docker pull` away.
+  GCC 16's libstdc++, CMake 4.4 and Doxygen 1.18. The image is public, as
+  `ghcr.io/takumu-dev/irama-ci`, tagged with the hash that `ci/image-tag.sh` prints, so CI's
+  compilers and checks are one `docker pull` away.
 - A change under `ci/linux/` makes a new tag. Commit it, then set `image-tag` in
   `.circleci/config.yml` to what `ci/image-tag.sh` prints, or the `image` job fails. That job builds
   and pushes a tag only when it is missing.

@@ -93,6 +93,27 @@
         "IRAMA_BUILD_CLI": false,
         "IRAMA_BUILD_TESTS": false
       }
+    },
+    {
+      "name": "lint",
+      "inherits": ["gcc", "debug"],
+      "displayName": "Formatting and documentation",
+      "description": "Checks the formatting with clang-format and the documentation of the public headers with Doxygen, building nothing else.",
+      "cacheVariables": {
+        "IRAMA_BUILD_CLI": false,
+        "IRAMA_BUILD_TESTS": false
+      }
+    },
+    {
+      "name": "tidy",
+      "inherits": ["clang", "debug"],
+      "displayName": "clang-tidy",
+      "description": "Builds every part with clang-tidy run on every C++ source.",
+      "cacheVariables": {
+        "IRAMA_BUILD_CLI": true,
+        "IRAMA_BUILD_TESTS": true,
+        "IRAMA_CLANG_TIDY": true
+      }
     }
   ],
   "buildPresets": [
@@ -100,7 +121,9 @@
     { "name": "gcc-release", "configurePreset": "gcc-release" },
     { "name": "clang-debug", "configurePreset": "clang-debug" },
     { "name": "clang-release", "configurePreset": "clang-release" },
-    { "name": "gcc-libirama", "configurePreset": "gcc-libirama" }
+    { "name": "gcc-libirama", "configurePreset": "gcc-libirama" },
+    { "name": "lint", "configurePreset": "lint", "targets": ["check-format", "docs"] },
+    { "name": "tidy", "configurePreset": "tidy" }
   ],
   "testPresets": [
     {
@@ -157,6 +180,20 @@
       "steps": [
         { "type": "configure", "name": "gcc-libirama" },
         { "type": "build", "name": "gcc-libirama" }
+      ]
+    },
+    {
+      "name": "lint",
+      "steps": [
+        { "type": "configure", "name": "lint" },
+        { "type": "build", "name": "lint" }
+      ]
+    },
+    {
+      "name": "tidy",
+      "steps": [
+        { "type": "configure", "name": "tidy" },
+        { "type": "build", "name": "tidy" }
       ]
     }
   ]

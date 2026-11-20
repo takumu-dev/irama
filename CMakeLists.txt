@@ -52,6 +52,9 @@ irama_check_compiler_floor("${CMAKE_CXX_COMPILER_ID}" "${CMAKE_CXX_COMPILER_VERS
 irama_detect_libstdcxx_release(irama_libstdcxx_release)
 irama_check_libstdcxx_floor("${irama_libstdcxx_release}")
 
+# Before any target, since IRAMA_CLANG_TIDY reaches only the targets added after it.
+include(IramaLint)
+
 add_subdirectory(libirama)
 
 if(IRAMA_BUILD_CLI)
