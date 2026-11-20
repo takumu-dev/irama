@@ -46,6 +46,7 @@ cmake --workflow --preset gcc-debug
 | `clang-debug`, `clang-release` | Clang with libstdc++ |
 | `msvc-debug`, `msvc-release` | MSVC, on Windows |
 | `clang-asan` | Clang, debug, with AddressSanitizer and UndefinedBehaviorSanitizer |
+| `clang-tsan` | Clang, debug, with ThreadSanitizer |
 | `clang-rtsan` | Clang, debug, with RealtimeSanitizer |
 | `gcc-libirama` | GCC, libirama alone, built but not tested |
 | `lint` | The formatting, with clang-format, and the documentation, with Doxygen |
@@ -89,6 +90,10 @@ twice a week:
   GCC 16's libstdc++, CMake 4.4 and Doxygen 1.18. The image is public, as
   `ghcr.io/takumu-dev/irama-ci`, tagged with the hash that `ci/image-tag.sh` prints, so CI's
   compilers and checks are one `docker pull` away.
+- `clang-tsan` runs the same image on a CircleCI machine rather than in its Docker executor. The
+  job first lowers the host's ASLR entropy to 28 bits, since ThreadSanitizer supports no more than
+  30 on x86_64, and Docker's default seccomp profile forbids its fallback of running with ASLR off.
+  It restores the other Linux jobs' vcpkg cache but never saves it.
 - A change under `ci/linux/` makes a new tag. Commit it, then set `image-tag` in
   `.circleci/config.yml` to what `ci/image-tag.sh` prints, or the `image` job fails. That job builds
   and pushes a tag only when it is missing.

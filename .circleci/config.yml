@@ -56,6 +56,23 @@ commands:
       - store_test_results:
           path: build/<< parameters.preset >>/junit.xml
 
+  # Restores the vcpkg binary cache that every Linux job shares. Every preset builds its
+  # dependencies with x64-linux and the image's default compiler, so one cache serves every Linux
+  # job. The image, the manifest and the presets decide what vcpkg builds, so they make the key, in
+  # /tmp/vcpkg-inputs.
+  restore-linux-vcpkg-cache:
+    steps:
+      - run:
+          name: Gather what vcpkg builds the ports from
+          command: |
+            git ls-files -z vcpkg.json vcpkg-configuration.json CMakePresets.json |
+              sort -z | xargs -0 cat > /tmp/vcpkg-inputs
+      - restore_cache:
+          name: Restore the vcpkg binary cache
+          keys:
+            - vcpkg-x64-linux-<< pipeline.parameters.image-tag >>-{{ checksum "/tmp/vcpkg-inputs" }}
+            - vcpkg-x64-linux-<< pipeline.parameters.image-tag >>-
+
 jobs:
   image:
     machine:
@@ -118,29 +135,10 @@ jobs:
       VCPKG_MAX_CONCURRENCY: "4"
     steps:
       - checkout
-      # vcpkg reads the ports at the versions the manifest names from the registry's history, so a
-      # shallow clone won't do. A blobless one fetches only the files vcpkg reads.
       - run:
           name: Set up vcpkg at the manifest's baseline
-          command: |
-            baseline=$(jq --raw-output '."builtin-baseline"' vcpkg.json)
-            git clone --quiet --filter=blob:none --no-checkout https://github.com/microsoft/vcpkg "$VCPKG_ROOT"
-            git -C "$VCPKG_ROOT" checkout --quiet "$baseline"
-            "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
-            mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
-      # Every preset builds its dependencies with x64-linux and the image's default compiler, so
-      # one cache serves every Linux job. The image, the manifest and the presets decide what vcpkg
-      # builds, so they make the key.
-      - run:
-          name: Gather what vcpkg builds the ports from
-          command: |
-            git ls-files -z vcpkg.json vcpkg-configuration.json CMakePresets.json |
-              sort -z | xargs -0 cat > /tmp/vcpkg-inputs
-      - restore_cache:
-          name: Restore the vcpkg binary cache
-          keys:
-            - vcpkg-x64-linux-<< pipeline.parameters.image-tag >>-{{ checksum "/tmp/vcpkg-inputs" }}
-            - vcpkg-x64-linux-<< pipeline.parameters.image-tag >>-
+          command: ci/setup-vcpkg.sh
+      - restore-linux-vcpkg-cache
       # vcpkg prints nothing while it builds a port, which can take longer than CircleCI's ten
       # minutes without output allow. The output is also kept in the build tree, for a failed job's
       # artifacts.
@@ -174,6 +172,60 @@ jobs:
           name: Gather the logs of a failed job
           when: on_fail
           command: ci/gather-logs.sh logs
+      - store_artifacts:
+          path: logs
+
+  # ThreadSanitizer supports at most 30 bits of ASLR entropy on x86_64, and CircleCI's Docker hosts
+  # use more. Its fallback, running the program again with ASLR off, needs a system call that
+  # Docker's default seccomp profile forbids. So this job runs on a machine, where it can lower the
+  # entropy, and runs the image there itself, with the checkout and the vcpkg cache mounted. The
+  # container runs as root, so what it writes in the checkout is root's, which the later steps only
+  # read.
+  linux-tsan:
+    machine:
+      image: ubuntu-2404:current
+    resource_class: large
+    environment:
+      IMAGE: ghcr.io/takumu-dev/irama-ci:<< pipeline.parameters.image-tag >>
+    steps:
+      - checkout
+      - run:
+          name: Lower the ASLR entropy to what ThreadSanitizer supports
+          command: sudo sysctl -w vm.mmap_rnd_bits=28
+      # The Docker jobs' cache restores to /opt, where this machine's user can't write.
+      - run:
+          name: Make the vcpkg binary cache's directory
+          command: |
+            sudo mkdir -p /opt/vcpkg-cache
+            sudo chown "$(id -u):$(id -g)" /opt/vcpkg-cache
+      # It shares the Docker jobs' cache, and never saves it, leaving that to them.
+      - restore-linux-vcpkg-cache
+      - run:
+          name: Start the image
+          command: |
+            docker run --detach --name irama \
+              --volume "$PWD:$PWD" --workdir "$PWD" \
+              --volume /opt/vcpkg-cache:/opt/vcpkg-cache \
+              --env VCPKG_ROOT=/opt/vcpkg --env VCPKG_DEFAULT_BINARY_CACHE=/opt/vcpkg-cache \
+              --env CMAKE_BUILD_PARALLEL_LEVEL=4 --env VCPKG_MAX_CONCURRENCY=4 \
+              "$IMAGE" sleep infinity
+      - run:
+          name: Set up vcpkg at the manifest's baseline
+          command: docker exec irama ci/setup-vcpkg.sh
+      - run:
+          name: Configure, build and test
+          no_output_timeout: 30m
+          command: |
+            docker exec irama bash -c '
+              set -o pipefail
+              mkdir -p build/clang-tsan
+              cmake --workflow --preset clang-tsan 2>&1 | tee build/clang-tsan/workflow.log'
+      - store_test_results:
+          path: build/clang-tsan/junit.xml
+      - run:
+          name: Gather the logs of a failed job
+          when: on_fail
+          command: docker exec irama ci/gather-logs.sh logs
       - store_artifacts:
           path: logs
 
@@ -299,6 +351,9 @@ workflows:
           name: clang-rtsan
           preset: clang-rtsan
           requires: [image]
+      - linux-tsan: &clang-tsan
+          name: clang-tsan
+          requires: [image]
       # It installs no ports, so a cache it saved would be empty and would stand in for the others'.
       - linux: &gcc-libirama
           name: gcc-libirama
@@ -328,6 +383,7 @@ workflows:
             - clang-debug
             - clang-release
             - clang-asan
+            - clang-tsan
             - clang-rtsan
             - gcc-libirama
             - lint
@@ -348,6 +404,7 @@ workflows:
       - linux: *clang-release
       - linux: *clang-asan
       - linux: *clang-rtsan
+      - linux-tsan: *clang-tsan
       - linux: *gcc-libirama
       - linux: *lint
       - linux: *tidy
@@ -360,6 +417,7 @@ workflows:
             - clang-debug
             - clang-release
             - clang-asan
+            - clang-tsan
             - clang-rtsan
             - gcc-libirama
             - lint
