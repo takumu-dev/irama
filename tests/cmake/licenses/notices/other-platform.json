@@ -1,0 +1,9 @@
+{
+  "name": "irama",
+  "dependencies": ["flacish"],
+  "features": {
+    "cli": { "description": "The command-line tool", "dependencies": ["argsish"] },
+    "gui": { "description": "The windowed application", "dependencies": [{ "name": "windowish", "features": ["images"] }, { "name": "windows-only", "platform": "windows" }] },
+    "tests": { "description": "The tests", "dependencies": ["test-framework"] }
+  }
+}

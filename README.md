@@ -115,3 +115,8 @@ The repository follows [REUSE](https://reuse.software): every file names its cop
 licence, in its first lines or in `REUSE.toml`, and the licence texts are in `LICENSES/`.
 Everything under `cli/` is GPL-3.0-or-later. Everything else, libirama, the tests and the build
 files included, is zlib.
+
+Every configuration checks the licences of the dependencies vcpkg installed, against the
+allowlists in `cmake/licenses.json`: a strict one for libirama, and a wider one for everything else.
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) holds the notices of the libraries irama-cli
+ships. Build the `notices` target of any preset that builds irama-cli to bring it up to date.

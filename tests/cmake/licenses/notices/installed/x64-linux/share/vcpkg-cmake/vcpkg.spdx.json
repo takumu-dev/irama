@@ -1,0 +1,10 @@
+{
+  "packages": [
+    {
+      "name": "vcpkg-cmake",
+      "SPDXID": "SPDXRef-port",
+      "versionInfo": "2025-08-07",
+      "licenseConcluded": "MIT"
+    }
+  ]
+}

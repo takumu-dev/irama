@@ -52,6 +52,11 @@ irama_check_compiler_floor("${CMAKE_CXX_COMPILER_ID}" "${CMAKE_CXX_COMPILER_VERS
 irama_detect_libstdcxx_release(irama_libstdcxx_release)
 irama_check_libstdcxx_floor("${irama_libstdcxx_release}")
 
+# Irama's own builds take their dependencies from the vcpkg manifest, and check their licences.
+if(irama_is_top_level AND VCPKG_MANIFEST_MODE)
+    include(IramaLicenses)
+endif()
+
 # Before any target, since IRAMA_CLANG_TIDY reaches only the targets added after it.
 include(IramaLint)
 

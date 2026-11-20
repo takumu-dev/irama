@@ -1,0 +1,9 @@
+{
+  "name": "irama",
+  "dependencies": ["flacish"],
+  "features": {
+    "cli": { "description": "The command-line tool", "dependencies": ["argsish", { "name": "vcpkg-cmake", "host": true }] },
+    "gui": { "description": "The windowed application", "dependencies": [{ "name": "windowish", "features": ["images"] }] },
+    "tests": { "description": "The tests", "dependencies": ["test-framework"] }
+  }
+}

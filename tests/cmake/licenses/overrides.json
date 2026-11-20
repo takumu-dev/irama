@@ -1,0 +1,24 @@
+{
+  "libirama": ["Zlib"],
+  "applications": ["Zlib", "MIT"],
+  "overrides": [
+    {
+      "port": "lodepng",
+      "version": "2021-12-04#1",
+      "license": "Zlib",
+      "reason": "The port declares no licence, and the LICENSE file of lodepng is the zlib licence."
+    },
+    {
+      "port": "misdeclared",
+      "version": "2.0",
+      "license": "Zlib",
+      "reason": "The port declares MIT, but every source file and the LICENSE file are zlib."
+    },
+    {
+      "port": "relicensed",
+      "version": "1.0",
+      "license": "MIT",
+      "reason": "The port declares zlib, but its sources moved to MIT."
+    }
+  ]
+}

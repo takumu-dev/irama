@@ -1,0 +1,12 @@
+{
+  "libirama": ["Zlib", "MIT-0", "Unlicense", "CC0-1.0"],
+  "applications": ["Zlib", "MIT", "BSL-1.0", "Apache-2.0"],
+  "overrides": [
+    {
+      "port": "pngish",
+      "version": "1.6.59",
+      "license": "Apache-2.0",
+      "reason": "A review found the sources under Apache-2.0."
+    }
+  ]
+}

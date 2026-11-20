@@ -1,0 +1,9 @@
+{
+  "libirama": ["Zlib"],
+  "applications": ["Zlib", "MIT"],
+  "fonts": {
+    "licenses": ["OFL-1.1"],
+    "ports": ["monoish"]
+  },
+  "overrides": []
+}
