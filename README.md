@@ -45,6 +45,8 @@ cmake --workflow --preset gcc-debug
 | `gcc-debug`, `gcc-release` | GCC |
 | `clang-debug`, `clang-release` | Clang with libstdc++ |
 | `msvc-debug`, `msvc-release` | MSVC, on Windows |
+| `clang-asan` | Clang, debug, with AddressSanitizer and UndefinedBehaviorSanitizer |
+| `clang-rtsan` | Clang, debug, with RealtimeSanitizer |
 | `gcc-libirama` | GCC, libirama alone, built but not tested |
 | `lint` | The formatting, with clang-format, and the documentation, with Doxygen |
 | `tidy` | Clang, every part built with clang-tidy |
