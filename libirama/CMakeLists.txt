@@ -7,6 +7,7 @@
 add_library(irama_engine INTERFACE)
 add_library(irama::engine ALIAS irama_engine)
 
+add_subdirectory(src/base)
 add_subdirectory(src/capi)
 
 # The imported targets that libirama may link: those of its own dependencies, at the top level of

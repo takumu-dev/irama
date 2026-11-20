@@ -122,6 +122,28 @@
       "displayName": "MSVC, release"
     },
     {
+      "name": "clang-asan",
+      "inherits": ["clang", "debug"],
+      "displayName": "Clang, debug, AddressSanitizer and UndefinedBehaviorSanitizer",
+      "description": "libirama, irama-cli and the tests are instrumented. The dependencies aren't, which AddressSanitizer on Linux doesn't need.",
+      "cacheVariables": {
+        "CMAKE_C_FLAGS": "-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer",
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined"
+      }
+    },
+    {
+      "name": "clang-rtsan",
+      "inherits": ["clang", "debug"],
+      "displayName": "Clang, debug, RealtimeSanitizer",
+      "description": "Every function marked IRAMA_NONBLOCKING stops the program at the first allocation, lock, system call or other real-time unsafe call it makes.",
+      "cacheVariables": {
+        "CMAKE_C_FLAGS": "-fsanitize=realtime",
+        "CMAKE_CXX_FLAGS": "-fsanitize=realtime",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=realtime"
+      }
+    },
+    {
       "name": "gcc-libirama",
       "inherits": ["gcc", "release"],
       "displayName": "GCC, release, libirama alone",
@@ -160,6 +182,8 @@
     { "name": "clang-release", "configurePreset": "clang-release" },
     { "name": "msvc-debug", "configurePreset": "msvc-debug" },
     { "name": "msvc-release", "configurePreset": "msvc-release" },
+    { "name": "clang-asan", "configurePreset": "clang-asan" },
+    { "name": "clang-rtsan", "configurePreset": "clang-rtsan" },
     { "name": "gcc-libirama", "configurePreset": "gcc-libirama" },
     { "name": "lint", "configurePreset": "lint", "targets": ["check-format", "docs"] },
     { "name": "tidy", "configurePreset": "tidy" }
@@ -181,7 +205,9 @@
     { "name": "clang-debug", "inherits": "test", "configurePreset": "clang-debug" },
     { "name": "clang-release", "inherits": "test", "configurePreset": "clang-release" },
     { "name": "msvc-debug", "inherits": "test", "configurePreset": "msvc-debug" },
-    { "name": "msvc-release", "inherits": "test", "configurePreset": "msvc-release" }
+    { "name": "msvc-release", "inherits": "test", "configurePreset": "msvc-release" },
+    { "name": "clang-asan", "inherits": "test", "configurePreset": "clang-asan" },
+    { "name": "clang-rtsan", "inherits": "test", "configurePreset": "clang-rtsan" }
   ],
   "workflowPresets": [
     {
@@ -230,6 +256,22 @@
         { "type": "configure", "name": "msvc-release" },
         { "type": "build", "name": "msvc-release" },
         { "type": "test", "name": "msvc-release" }
+      ]
+    },
+    {
+      "name": "clang-asan",
+      "steps": [
+        { "type": "configure", "name": "clang-asan" },
+        { "type": "build", "name": "clang-asan" },
+        { "type": "test", "name": "clang-asan" }
+      ]
+    },
+    {
+      "name": "clang-rtsan",
+      "steps": [
+        { "type": "configure", "name": "clang-rtsan" },
+        { "type": "build", "name": "clang-rtsan" },
+        { "type": "test", "name": "clang-rtsan" }
       ]
     },
     {

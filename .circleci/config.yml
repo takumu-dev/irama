@@ -291,6 +291,14 @@ workflows:
           name: clang-release
           preset: clang-release
           requires: [image]
+      - linux: &clang-asan
+          name: clang-asan
+          preset: clang-asan
+          requires: [image]
+      - linux: &clang-rtsan
+          name: clang-rtsan
+          preset: clang-rtsan
+          requires: [image]
       # It installs no ports, so a cache it saved would be empty and would stand in for the others'.
       - linux: &gcc-libirama
           name: gcc-libirama
@@ -319,6 +327,8 @@ workflows:
             - gcc-release
             - clang-debug
             - clang-release
+            - clang-asan
+            - clang-rtsan
             - gcc-libirama
             - lint
             - tidy
@@ -336,6 +346,8 @@ workflows:
       - linux: *gcc-release
       - linux: *clang-debug
       - linux: *clang-release
+      - linux: *clang-asan
+      - linux: *clang-rtsan
       - linux: *gcc-libirama
       - linux: *lint
       - linux: *tidy
@@ -347,6 +359,8 @@ workflows:
             - gcc-release
             - clang-debug
             - clang-release
+            - clang-asan
+            - clang-rtsan
             - gcc-libirama
             - lint
             - tidy

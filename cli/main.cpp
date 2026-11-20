@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 takumu-dev
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <irama/engine/base/narrow.hpp>
+
 #include <cstddef>
 #include <cstdio>
 #include <print>
@@ -37,5 +39,5 @@ int main(int argc, char** argv) {
     // in CI. Without them, abort() ends the program at once.
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 #endif
-    return irama_cli::run({argv, static_cast<std::size_t>(argc)});
+    return irama_cli::run({argv, irama::narrow<std::size_t>(argc)});
 }
