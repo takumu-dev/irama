@@ -33,6 +33,7 @@ exceptions or RTTI.
 |---|---|---|
 | `base` | Assertions, `irama::narrow`, the `IRAMA_NONBLOCKING` mark, the render scope with the real-time guard, and the single-producer, single-consumer queue. | nothing |
 | `capi` | The C API: `irama.h` and its implementation. | `base` |
+| `wav` | The WAV writer, which irama-cli and the tests share. | `base` |
 
 `irama::engine` links every component but `capi`. Nothing links `capi`: it sits on top of the other
 components, and its only public header is `irama.h`, which is C.
@@ -70,11 +71,39 @@ nothing and never waits; it reports a full or empty queue at once. Its tests pus
 render scope, so the checks above watch them, and a stress test passes messages between two threads,
 which **ThreadSanitizer**, in `clang-tsan`, watches for races.
 
+## The WAV writer and golden tests
+
+`irama::WavWriter`, in `<irama/engine/wav/wav_writer.hpp>`, writes interleaved 32-bit float samples
+to a WAV file, as WAV's IEEE float format with a `fact` chunk. It writes through `<cstdio>` and
+allocates nothing itself, though the C library may buffer the file. It writes a header for no
+samples when it opens the file, and the real lengths when `finish()` closes it. It is part of the
+internal C++ API, not of `irama.h`. Nothing in libirama reads WAV files.
+
+`irama-cli tone <file.wav> [--freq <hertz>] [--seconds <seconds>]` writes a sine wave at half of
+full scale, 440 Hz and one second by default, the same on both channels, at 48 kHz. It renders
+each block of frames inside a render scope, as a render call would, so the real-time checks watch
+it.
+
+A golden test runs irama-cli and compares the file it writes with a golden stored beside the test,
+`tests/golden/<case>.wav`. `cmake/golden_test.cmake` runs the case, and `irama_wav_compare`, a test
+program that reads both files with dr_wav, compares them. dr_wav was written apart from Irama's
+writer, so it checks the writer's headers too. The format, rate, channel count and length must
+match exactly, and each sample may differ from its golden by at most 1e-5. That absorbs the few
+ulps by which compilers' float results differ, so every test preset runs the goldens: the debug
+presets under the real-time guard, and the sanitizer presets under their checks. A golden may be at
+most 512 KiB, about 1.3 seconds, unless its case allows more. Only the `gcc-release` build writes
+goldens, so that they don't drift between compilers. The checks under `tests/golden/harness/` run
+the script and the compare tool on goldens wrong in each way, and show that each one fails.
+
 ## Dependencies
 
 Every dependency comes from `vcpkg.json`. libirama's are its top-level dependencies, and each other
-part's are a manifest feature. Every configuration checks the licence of each port vcpkg installed
-against one of two allowlists in `cmake/licenses.json`:
+part's are a manifest feature. An overlay port in `ports/`, which `vcpkg-configuration.json` puts
+ahead of vcpkg's own, pins a dependency to a newer upstream commit than vcpkg's port has: `drlibs`,
+for the bounds fixes in dr_flac 0.13.4 and after.
+
+Every configuration checks the licence of each port vcpkg installed against one of two allowlists
+in `cmake/licenses.json`:
 
 - **libirama's list** covers libirama's dependencies and every port they depend on. It admits only
   licences that ask a game for no notice, so libirama needs no third-party notices.
@@ -109,6 +138,7 @@ The tests check that all of these agree.
 | `CMakeLists.txt` | The project, the part switches, the real-time guard's switch, and the version read from `irama.h`. |
 | `CMakePresets.json` | Every supported configuration, each with a workflow preset. |
 | `vcpkg.json` | The dependencies: libirama's at the top level, each other part's as a feature. |
+| `vcpkg-configuration.json`, `ports/` | The overlay ports, which stand in for vcpkg's own. |
 | `cmake/IramaFloors.cmake` | The compiler, libstdc++ and checking tool floor checks. |
 | `cmake/IramaConventions.cmake` | The language standard and warning flags of every target. |
 | `cmake/IramaComponents.cmake` | `irama_add_component()` and `irama_check_link_closure()`. |
@@ -117,7 +147,9 @@ The tests check that all of these agree.
 | `cmake/IramaLint.cmake` | The formatting, clang-tidy and documentation checks. |
 | `.clang-format`, `.clang-tidy`, `Doxyfile` | The settings of those checks. |
 | `cmake/expect_abort.cmake` | Runs a program that must abort, and checks its report. |
-| `tests/` | The tests, one folder per component under `unit/`, the programs that must abort under `abort/`, and the CLI and configuration checks. |
+| `cmake/golden_test.cmake` | Runs a golden case, or writes its golden. |
+| `tests/` | The tests, one folder per component under `unit/`, the programs that must abort under `abort/`, the golden cases and the compare tool under `golden/`, and the CLI and configuration checks. |
 | `ci/` | The CI's Linux image, under `linux/`, the Windows job's scripts, under `windows/`, and the scripts the Linux jobs share. |
 | `THIRD_PARTY_NOTICES.md` | The notices of the libraries the applications ship. |
 | `REUSE.toml`, `LICENSES/` | The licences of files that can't hold a comment, and their texts. |
+| `.gitattributes` | Marks WAV files binary. |

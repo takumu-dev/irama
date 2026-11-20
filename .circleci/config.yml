@@ -58,14 +58,14 @@ commands:
 
   # Restores the vcpkg binary cache that every Linux job shares. Every preset builds its
   # dependencies with x64-linux and the image's default compiler, so one cache serves every Linux
-  # job. The image, the manifest and the presets decide what vcpkg builds, so they make the key, in
-  # /tmp/vcpkg-inputs.
+  # job. The image, the manifest, the overlay ports and the presets decide what vcpkg builds, so
+  # they make the key, in /tmp/vcpkg-inputs.
   restore-linux-vcpkg-cache:
     steps:
       - run:
           name: Gather what vcpkg builds the ports from
           command: |
-            git ls-files -z vcpkg.json vcpkg-configuration.json CMakePresets.json |
+            git ls-files -z vcpkg.json vcpkg-configuration.json CMakePresets.json ports |
               sort -z | xargs -0 cat > /tmp/vcpkg-inputs
       - restore_cache:
           name: Restore the vcpkg binary cache
@@ -257,11 +257,12 @@ jobs:
           name: Set up vcpkg at the manifest's baseline
           command: pwsh -NoProfile -File ci/windows/setup-vcpkg.ps1; exit $LASTEXITCODE
       # Both presets build their dependencies with x64-windows-static-md, so one cache serves both.
-      # The image, the manifest and the presets decide what vcpkg builds, so they make the key.
+      # The image, the manifest, the overlay ports and the presets decide what vcpkg builds, so they
+      # make the key.
       - run:
           name: Gather what vcpkg builds the ports from
           command: |
-            git ls-files vcpkg.json vcpkg-configuration.json CMakePresets.json |
+            git ls-files vcpkg.json vcpkg-configuration.json CMakePresets.json ports |
               Sort-Object | ForEach-Object { Get-Content $_ } | Set-Content C:\ci\vcpkg-inputs
       - restore_cache:
           name: Restore the vcpkg binary cache

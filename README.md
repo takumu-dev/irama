@@ -69,9 +69,15 @@ and `tidy`.
 
 The tests run with each workflow preset, or alone with `ctest --preset <preset>`. Every test carries
 one CTest label: `abort`, for the checks that end the program, which run through
-`cmake/expect_abort.cmake`, or `unit`, for Catch2 test cases and the other checks run through CMake.
-Each test's name begins with what it tests: a libirama component such as `base` or `capi`, `cli`
-for irama-cli, or `build` for the configuration itself.
+`cmake/expect_abort.cmake`; `golden`, for the golden cases, which compare what irama-cli writes with
+a stored WAV file; or `unit`, for Catch2 test cases and the other checks run through CMake. Each
+test's name begins with what it tests: a libirama component such as `base` or `capi`, `cli` for
+irama-cli, `golden` for a golden case, `golden harness` for the checks of the golden tests
+themselves, or `build` for the configuration itself.
+
+`IRAMA_UPDATE_GOLDENS=1 ctest --preset gcc-release -L golden` writes the goldens. Listen to each
+new or changed golden before committing it. [`CODING_STANDARDS.md`](CODING_STANDARDS.md) has the
+whole procedure.
 
 ## Contributing
 

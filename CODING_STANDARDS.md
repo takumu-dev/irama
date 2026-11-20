@@ -217,7 +217,8 @@ departs from them, it says so.
 - A component's test cases are added with `irama_add_tests()`, as a program that links only that
   component. Each case carries one Catch2 tag naming its component (`[capi]`), and its CTest name
   begins with the same component, which `irama_add_tests()` adds. Checks of the configuration begin
-  with `build`, and of irama-cli with `cli`.
+  with `build`, of irama-cli with `cli`, golden cases with `golden`, and the golden harness's own
+  checks with `golden harness`.
 - A test file is `<thing>_tests.cpp`, in its component's folder under `tests/unit/`. The check that
   `irama.h` compiles as C99 is the one C source among them, `irama_h_c99_tests.c`, a program of its
   own registered with CTest under the `capi` name. MSVC has no C99 mode, so it builds that file as
@@ -227,10 +228,37 @@ departs from them, it says so.
   which runs it through `cmake/expect_abort.cmake`. The script passes only if the program aborts
   after writing one line to stderr that matches the expected report, or RealtimeSanitizer stops it
   for the C library call the test names, or, for a check that is compiled out, the program exits 0
-  quietly. Such a test carries the `abort` label, and every other test the `unit` label.
+  quietly. Such a test carries the `abort` label, a golden case the `golden` label, and every other
+  test the `unit` label. A new label comes only with a new kind of test.
+- A test's helper that hands a list of arguments to a CMake script through `add_test()` writes each
+  separator as `$<SEMICOLON>`. A separator escaped as `\;` reaches the script with its backslash,
+  and the list arrives as one argument.
 - Every Catch2 program runs from `tests/catch_main.cpp`, not Catch2's own main. It turns off MSVC's
   abort dialog, as irama-cli's main and the programs under `tests/abort/` do, so a test that aborts
   fails at once rather than wait for a click.
+
+### Golden tests
+
+- A golden case checks what irama-cli writes against a stored WAV file, its golden. A golden is
+  exactly what irama-cli wrote: 32-bit float, 48 kHz, stereo. Every test preset runs every case.
+- **Adding a case.** Add `irama_add_golden_test(<case> ARGS <arguments>)` to
+  `tests/golden/CMakeLists.txt`. irama-cli is given the arguments, then the path of the file to
+  write. The case is the CTest test `golden: <case>`, and its golden is `tests/golden/<case>.wav`.
+  Each sample may differ from its golden by 1e-5, and a golden may be 512 KiB, about 1.3 seconds. A
+  case that needs more gives `TOLERANCE <error>` or `MAX_SIZE <bytes>`, with a comment saying why.
+  Then write its golden as below.
+- **Updating.** `IRAMA_UPDATE_GOLDENS=1 ctest --preset gcc-release -L golden` writes the goldens:
+  each case copies the file irama-cli wrote over its golden, or creates a missing one, and passes.
+  Add `--verbose` to see each case's largest difference from its old golden and its new peak. Only
+  `gcc-release` writes goldens, so that they don't drift between compilers, and the other presets
+  refuse to. Without the variable, a case with no golden fails, naming that command.
+- **Approving.** Listen to each new or changed golden, and look at it in an audio editor, before
+  committing it. Commit it in the change that caused it, with the reason in the commit message.
+  Nothing commits goldens on its own.
+- A case that fails keeps the file irama-cli wrote in `build/<preset>/golden-failures/`, named
+  after its golden, for comparing with the golden. CI keeps that folder too.
+- Goldens are plain git files, with no LFS. `.gitattributes` marks them binary, and `REUSE.toml`
+  gives them the zlib licence.
 
 ## Commits and branches
 

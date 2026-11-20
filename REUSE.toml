@@ -5,7 +5,13 @@
 version = 1
 
 [[annotations]]
-path = ["CMakePresets.json", "vcpkg.json", "cmake/licenses.json"]
+path = [
+    "CMakePresets.json",
+    "vcpkg.json",
+    "vcpkg-configuration.json",
+    "ports/*/vcpkg.json",
+    "cmake/licenses.json",
+]
 SPDX-FileCopyrightText = "2026 takumu-dev"
 SPDX-License-Identifier = "Zlib"
 
@@ -14,5 +20,11 @@ SPDX-License-Identifier = "Zlib"
 [[annotations]]
 path = ["THIRD_PARTY_NOTICES.md", "tests/cmake/licenses/**"]
 precedence = "override"
+SPDX-FileCopyrightText = "2026 takumu-dev"
+SPDX-License-Identifier = "Zlib"
+
+# The golden WAV files, which irama-cli wrote.
+[[annotations]]
+path = ["tests/golden/*.wav"]
 SPDX-FileCopyrightText = "2026 takumu-dev"
 SPDX-License-Identifier = "Zlib"

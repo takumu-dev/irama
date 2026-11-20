@@ -1,0 +1,6 @@
+# SPDX-FileCopyrightText: 2026 takumu-dev
+# SPDX-License-Identifier: Zlib
+
+# Golden WAV files are compared byte for byte, so git must never touch their line endings or diff
+# them as text.
+*.wav binary

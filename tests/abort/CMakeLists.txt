@@ -10,8 +10,9 @@
 function(irama_add_abort_test component name)
     cmake_parse_arguments(PARSE_ARGV 2 arg "" "PROGRAM;REPORT;REALTIME_SANITIZER_CALL" "ARGUMENTS")
     set(test_name "${component}: ${name}")
-    # Escaped, so the list reaches the script as one definition.
-    string(REPLACE ";" "\\;" arguments "${arg_ARGUMENTS}")
+    # Each separator written as a generator expression, so that add_test() keeps the list as one
+    # argument, and the script gets it with plain separators.
+    string(REPLACE ";" "$<SEMICOLON>" arguments "${arg_ARGUMENTS}")
     set(options "-DPROGRAM=$<TARGET_FILE:${arg_PROGRAM}>" "-DARGUMENTS=${arguments}")
     if(DEFINED arg_REPORT)
         list(APPEND options "-DREPORT=${arg_REPORT}")

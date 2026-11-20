@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: Zlib
 
 # Irama's tests. Each one carries exactly one CTest label: `abort` for the checks that end the
-# program, run through cmake/expect_abort.cmake, and `unit` for Catch2 test cases and the other
-# checks run through CMake. Each test's name begins with the component it tests, matching the tag on
-# its Catch2 test case, or with the part it tests: `build` for the configuration and `cli` for
-# irama-cli.
+# program, run through cmake/expect_abort.cmake, `golden` for the golden cases, run through
+# cmake/golden_test.cmake, and `unit` for Catch2 test cases and the other checks run through CMake.
+# Each test's name begins with the component it tests, matching the tag on its Catch2 test case, or
+# with the part it tests: `build` for the configuration, `cli` for irama-cli, `golden` for a golden
+# case and `golden harness` for the golden tests' own checks.
 
 find_package(Catch2 3 CONFIG REQUIRED)
 include(Catch)
@@ -38,7 +39,9 @@ add_subdirectory(abort)
 add_subdirectory(cmake)
 add_subdirectory(unit/base)
 add_subdirectory(unit/capi)
+add_subdirectory(unit/wav)
 
 if(IRAMA_BUILD_CLI)
     add_subdirectory(cli)
+    add_subdirectory(golden)
 endif()
