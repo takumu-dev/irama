@@ -7,6 +7,8 @@
 add_executable(irama_studio_tests
     audio_device_tests.cpp
     config_files_tests.cpp
+    device_choice_tests.cpp
+    heartbeat_watch_tests.cpp
     key_map_tests.cpp
     message_backlog_tests.cpp
     meter_display_tests.cpp
