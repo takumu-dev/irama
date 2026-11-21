@@ -204,12 +204,11 @@ struct SynthOptions {
     }
     if (name == "--rate") {
         const auto rate = value != nullptr ? parse_rate(value) : std::nullopt;
-        const auto* const known = rate ? std::ranges::find(synth_rates, *rate) : synth_rates.end();
-        if (known == synth_rates.end()) {
+        if (!rate || !std::ranges::contains(synth_rates, *rate)) {
             std::println(stderr, "irama-cli: --rate takes 44100, 48000, 88200 or 96000");
             return false;
         }
-        options.rate = *known;
+        options.rate = *rate;
         return true;
     }
     std::println(stderr, "{}", usage);
