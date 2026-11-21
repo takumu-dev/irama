@@ -3,8 +3,10 @@
 
 #pragma once
 
+#include "audio/device_choice.hpp"
 #include "input/key_map.hpp"
 
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -29,6 +31,10 @@ struct Settings {
     bool window_maximized = false;
     /// The UI font's size, in logical pixels, before the display's scale.
     int font_size = 15;
+    /// The audio device's name, or empty for the system default.
+    std::string audio_device{};
+    /// The number of frames in each audio callback, one of `buffer_sizes`.
+    std::uint32_t buffer_size = default_buffer_size;
     /// The keyboard octave the note keys play in, from 0 to 8.
     int octave = default_octave;
 

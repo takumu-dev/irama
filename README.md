@@ -75,8 +75,11 @@ Instrument and Audio windows docked side by side, and remembers its window and l
 keeps the settings in another directory, for a clean start, and `--exit-after-frames <count>`, for
 tests, quits after drawing that many frames.
 
-Studio plays through the system's default sound device, by PulseAudio, which PipeWire serves too,
-or by ALSA where there is no PulseAudio server, and runs silent where neither works. The computer
+Studio plays through PulseAudio, which PipeWire serves too, or through ALSA where there is no
+PulseAudio server, and runs silent where neither works. The Audio window picks the device, the
+system default unless another is chosen, and the buffer size, 256 frames unless another is chosen.
+A device that stops playing, such as a USB device unplugged, gives way to the system default, and
+where that fails too, the Audio window's Reopen button tries again. The computer
 keyboard is a piano of two rows: `Z` to `/` from C of the keyboard octave, and `Q` to `P` from the
 octave above, by the keys' positions on a US keyboard, so every layout plays the same. Numpad `/`
 and `*`, or the buttons in the status bar, lower and raise the octave, from 0 to 8, so that at the

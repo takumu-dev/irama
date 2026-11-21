@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "views/audio_window.hpp"
+
 namespace irama_studio {
 
 class AudioEngine;
@@ -18,10 +20,14 @@ class Workspace {
     /// \param engine The audio engine, which the Audio window describes.
     [[nodiscard]] bool draw(StatusBar& status, const AudioEngine& engine);
 
+    /// \return The Audio window, with what the user asked of it on the latest frame.
+    [[nodiscard]] const AudioWindow& audio_window() const { return audio_window_; }
+
   private:
     bool instrument_open_ = true;
     bool audio_open_ = true;
     bool about_open_ = false;
+    AudioWindow audio_window_;
 };
 
 } // namespace irama_studio
