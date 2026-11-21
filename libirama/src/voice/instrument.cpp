@@ -8,6 +8,8 @@
 #include <irama/engine/param/param_descriptor.hpp>
 #include <irama/engine/param/param_id.hpp>
 #include <irama/engine/param/param_smoother.hpp>
+#include <irama/engine/source/oscillator.hpp>
+#include <irama/engine/source/tuning.hpp>
 #include <irama/engine/voice/adsr.hpp>
 
 #include <algorithm>
@@ -30,6 +32,12 @@ using irama::InstrumentParam;
     return irama::find_param(irama::instrument_params, id).value();
 }
 
+constexpr std::size_t osc1_waveform = index_of(InstrumentParam::osc1_waveform);
+constexpr std::size_t osc1_level = index_of(InstrumentParam::osc1_level);
+constexpr std::size_t osc1_pulse_width = index_of(InstrumentParam::osc1_pulse_width);
+constexpr std::size_t osc1_coarse = index_of(InstrumentParam::osc1_coarse);
+constexpr std::size_t osc1_fine = index_of(InstrumentParam::osc1_fine);
+constexpr std::size_t noise_level = index_of(InstrumentParam::noise_level);
 constexpr std::size_t gain = index_of(InstrumentParam::gain);
 constexpr std::size_t pan = index_of(InstrumentParam::pan);
 constexpr std::size_t velocity_sensitivity = index_of(InstrumentParam::velocity_sensitivity);
@@ -42,6 +50,15 @@ constexpr std::size_t decay_curve = index_of(InstrumentParam::decay_curve);
 constexpr std::size_t release_curve = index_of(InstrumentParam::release_curve);
 
 constexpr float percent = 100.0F;
+constexpr float cents_per_semitone = 100.0F;
+
+// Renders a percentage parameter's values as fractions from 0 to 1.
+void render_fraction(const irama::ParamSmoother& param, std::span<float> values) IRAMA_NONBLOCKING {
+    param.render(values);
+    for (float& value : values) {
+        value /= percent;
+    }
+}
 
 template <std::size_t... Index>
 [[nodiscard]] std::array<irama::ParamSmoother, sizeof...(Index)>
@@ -81,6 +98,11 @@ float Instrument::value(std::size_t index) const {
 
 float Instrument::sample_rate() const { return sample_rate_; }
 
+Waveform Instrument::waveform() const {
+    // A stepped value holds a whole number within its range.
+    return static_cast<Waveform>(static_cast<int>(params_.at(osc1_waveform).value()));
+}
+
 AdsrSettings Instrument::envelope() const {
     return AdsrSettings{
         .attack_seconds = params_.at(attack).value(),
@@ -99,13 +121,29 @@ float Instrument::velocity_gain(float velocity) const {
 
 InstrumentBlock Instrument::render(std::size_t frames) IRAMA_NONBLOCKING {
     IRAMA_ASSERT(frames <= max_block_frames, "an instrument computes at most one block at once");
+    const auto osc_levels = std::span{osc_level_}.first(frames);
+    const auto pulse_widths = std::span{pulse_width_}.first(frames);
+    const auto tunings = std::span{tuning_}.first(frames);
+    const auto noise_levels = std::span{noise_level_}.first(frames);
     const auto sustain_levels = std::span{sustain_}.first(frames);
     const auto left = std::span{left_gain_}.first(frames);
     const auto right = std::span{right_gain_}.first(frames);
 
-    params_.at(sustain).render(sustain_levels);
-    for (float& level : sustain_levels) {
-        level /= percent;
+    render_fraction(params_.at(osc1_level), osc_levels);
+    render_fraction(params_.at(osc1_pulse_width), pulse_widths);
+    render_fraction(params_.at(noise_level), noise_levels);
+    render_fraction(params_.at(sustain), sustain_levels);
+    // The coarse tuning is stepped, so it holds for the block.
+    const float coarse = params_.at(osc1_coarse).value();
+    if (params_.at(osc1_fine).ramping()) {
+        // The fine tuning's cents go through the tunings' buffer on the way.
+        params_.at(osc1_fine).render(tunings);
+        for (float& tuning : tunings) {
+            tuning = tuning_ratio(coarse + (tuning / cents_per_semitone));
+        }
+    } else {
+        std::ranges::fill(
+            tunings, tuning_ratio(coarse + (params_.at(osc1_fine).value() / cents_per_semitone)));
     }
     if (params_.at(gain).ramping() || params_.at(pan).ramping()) {
         // The gain's decibels and the pan's positions go through the gains' buffers on the way.
@@ -121,11 +159,17 @@ InstrumentBlock Instrument::render(std::size_t frames) IRAMA_NONBLOCKING {
         std::ranges::fill(right, right_gain);
     }
 
+    const Waveform block_waveform = waveform();
     const AdsrSettings settings = envelope();
     for (ParamSmoother& param : params_) {
         param.advance(frames);
     }
     return InstrumentBlock{
+        .waveform = block_waveform,
+        .osc_level = osc_levels,
+        .pulse_width = pulse_widths,
+        .tuning = tunings,
+        .noise_level = noise_levels,
         .envelope = settings,
         .sustain = sustain_levels,
         .left_gain = left,

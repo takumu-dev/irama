@@ -4,6 +4,7 @@
 #include <irama/engine/player/player.hpp>
 
 #include "counting_allocator.hpp"
+#include <irama/engine/base/pcg32.hpp>
 #include <irama/engine/base/render_scope.hpp>
 #include <irama/engine/param/param_descriptor.hpp>
 #include <irama/engine/voice/instrument.hpp>
@@ -77,6 +78,29 @@ void send_values(irama::Player& player, std::uint64_t frame) {
     REQUIRE(player.set_parameter(frame, irama::InstrumentParam::gain, 0.0F));
     REQUIRE(player.set_parameter(frame, irama::InstrumentParam::pan, 0.75F));
     REQUIRE(player.set_parameter(frame, irama::InstrumentParam::sustain, 40.0F));
+}
+
+// A player of a seed playing two notes of noise alone, overlapping.
+[[nodiscard]] irama::PlayerPtr make_noise_player(std::uint64_t seed) {
+    auto player = irama::Player::create({.sample_rate = rate, .seed = seed});
+    REQUIRE(player.has_value());
+    REQUIRE((*player)->set_parameter(0, irama::InstrumentParam::osc1_level, 0.0F));
+    REQUIRE((*player)->set_parameter(0, irama::InstrumentParam::noise_level, 100.0F));
+    REQUIRE((*player)->note_on(0, 57, 1.0F));
+    REQUIRE((*player)->note_on(500, 60, 1.0F));
+    return std::move(*player);
+}
+
+// A player of noise alone, panned hard left, starting `notes` notes of A-4 at frame 0.
+[[nodiscard]] irama::PlayerPtr make_noise_chord(int notes) {
+    auto player = make_player();
+    REQUIRE(player->set_parameter(0, irama::InstrumentParam::osc1_level, 0.0F));
+    REQUIRE(player->set_parameter(0, irama::InstrumentParam::noise_level, 100.0F));
+    REQUIRE(player->set_parameter(0, irama::InstrumentParam::pan, -1.0F));
+    for (int note = 0; note < notes; ++note) {
+        REQUIRE(player->note_on(0, 57, 1.0F));
+    }
+    return player;
 }
 
 [[nodiscard]] bool silent(std::span<const float> samples) {
@@ -175,14 +199,17 @@ TEST_CASE("a player writes what its voices sum to", "[player]") {
     REQUIRE(player->set_parameter(1'000, irama::InstrumentParam::pan, -0.5F));
     const auto out = render(*player, 2'000);
 
-    // The same voices, reading the same instrument, which glides to its new pan at frame 1000.
+    // The same voices, reading the same instrument, which glides to its new pan at frame 1000,
+    // each with the noise generator the player's default seed gives it.
     irama::Instrument instrument{static_cast<float>(rate)};
+    irama::Pcg32 generator{irama::PlayerConfig{}.seed, 0};
     irama::Voice first;
     irama::Voice second;
-    first.start(57, 1.0F, instrument);
-    second.start(64, 0.5F, instrument);
+    first.start(57, 1.0F, instrument, generator.split());
+    second.start(64, 0.5F, instrument, generator.split());
     std::vector<float> expected(out.size());
-    std::vector<float> scratch(irama::Instrument::max_block_frames * 2);
+    std::vector<float> scratch(irama::Instrument::max_block_frames *
+                               irama::Voice::scratch_per_frame);
     std::span<float> rest{expected};
     for (std::size_t frame = 0; frame < 2'000;) {
         if (frame == 1'000) {
@@ -346,4 +373,30 @@ TEST_CASE("a player renders no frames when asked for none", "[player]") {
     REQUIRE(player->active_voices() == 0);
     const auto out = render(*player, 300);
     REQUIRE_FALSE(silent(out));
+}
+
+TEST_CASE("two players with the same seed render the same noise", "[player]") {
+    const auto first = make_noise_player(1'234);
+    const auto second = make_noise_player(1'234);
+    const auto out = render(*first, 2'000);
+    REQUIRE_FALSE(silent(out));
+    REQUIRE(render(*second, 2'000) == out);
+}
+
+TEST_CASE("players with different seeds render different noise", "[player]") {
+    const auto first = make_noise_player(1);
+    const auto second = make_noise_player(2);
+    REQUIRE(render(*first, 1'000) != render(*second, 1'000));
+}
+
+TEST_CASE("each note-on gives its voice a noise stream of its own", "[player]") {
+    // Two notes at once on the same pitch, with nothing but noise, would sound as one note twice
+    // as loud if their noise were the same.
+    const auto one_note = make_noise_chord(1);
+    const auto two_notes = make_noise_chord(2);
+    const auto one = render(*one_note, 1'000);
+    const auto two = render(*two_notes, 1'000);
+    std::vector<float> doubled(one.size());
+    std::ranges::transform(one, doubled.begin(), [](float sample) { return 2.0F * sample; });
+    REQUIRE(two != doubled);
 }

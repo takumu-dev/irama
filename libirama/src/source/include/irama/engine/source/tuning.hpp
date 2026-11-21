@@ -23,4 +23,12 @@ inline constexpr int highest_note = 119;
 /// \return The note's frequency in hertz.
 [[nodiscard]] float note_frequency(int note);
 
+/// Returns the ratio by which a number of semitones raises a frequency, `2^(semitones / 12)`. A
+/// note tuned by a coarse offset in semitones and a fine one in cents plays at its frequency times
+/// the ratio of `coarse + fine / 100`.
+///
+/// \param semitones How far to tune, in semitones, which may be fractional or below 0.
+/// \return The ratio, above 0.
+[[nodiscard]] float tuning_ratio(float semitones);
+
 } // namespace irama

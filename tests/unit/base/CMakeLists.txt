@@ -9,6 +9,7 @@ irama_add_tests(base
         narrow_tests.cpp
         owned_array_tests.cpp
         owned_ptr_tests.cpp
+        pcg32_tests.cpp
         render_scope_tests.cpp
         spsc_queue_tests.cpp
 )
