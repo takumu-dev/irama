@@ -532,8 +532,8 @@ irama_add_link_closure_test(
     FAILS_WITH "irama_engine links Fake::forbidden\\."
 )
 
-# Irama's own notices, in a configuration that installs what irama-cli ships.
-if(IRAMA_BUILD_CLI AND DEFINED IRAMA_NOTICES_OPTIONS)
+# Irama's own notices, in a configuration that installs what every application ships.
+if(DEFINED IRAMA_NOTICES_OPTIONS)
     irama_add_license_check_test("THIRD_PARTY_NOTICES.md lists what the applications ship" "" ""
         ${IRAMA_NOTICES_OPTIONS}
         "-DCHECK_NOTICES=${PROJECT_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"

@@ -19,7 +19,7 @@ parameters:
   # the tag is written here, and the image job fails when it is out of step with ci/linux/.
   image-tag:
     type: string
-    default: 72c4907ef2ec0932583745b4fa366cdb6f49bdca
+    default: 9e5a010d4a24debf9f2004b87c68a9f0a8428675
   windows:
     description: Set by Monday's schedule, and by no other run.
     type: boolean

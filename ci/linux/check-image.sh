@@ -4,9 +4,10 @@
 
 # Checks that the image keeps the promises CI relies on: the compilers at their floors under the
 # names the presets use, GCC 16's libstdc++ under both of them, the sanitizer runtimes, LLVM's
-# format and tidy tools, Doxygen, and what CMake, vcpkg and CircleCI call. The image's build runs
-# this last, so an image that breaks a promise is never pushed. It reports every broken promise,
-# not just the first.
+# format and tidy tools, Doxygen, what CMake, vcpkg and CircleCI call, what SDL3 builds its video
+# drivers against, and a Vulkan driver for Studio's smoke test. The image's build runs this last, so
+# an image that breaks a promise is never pushed. It reports every broken promise, not just the
+# first.
 set -u
 
 failures=0
@@ -92,6 +93,18 @@ expect_program "Clang with ThreadSanitizer" build-only clang++ -fsanitize=thread
 # clones over SSH.
 expect "CMake is 4.4" '^cmake version 4\.4\.' cmake --version
 expect_command ninja git ssh curl tar zip unzip xz pkg-config jq
+
+# SDL3 asks pkg-config for these as it builds, and leaves out the video driver of any it can't find.
+for package in wayland-client wayland-egl wayland-cursor egl xkbcommon x11 xext; do
+    pkg-config --exists "$package" || fail "pkg-config can't find $package, which SDL3 builds with"
+done
+expect_command wayland-scanner
+
+# SDL loads the Vulkan loader at run time, which finds lavapipe through its manifest.
+ldconfig -p | grep -q 'libvulkan\.so\.1 ' \
+    || fail "the Vulkan loader, libvulkan.so.1, isn't installed"
+[ -f /usr/share/vulkan/icd.d/lvp_icd.json ] \
+    || fail "lavapipe's manifest, /usr/share/vulkan/icd.d/lvp_icd.json, isn't installed"
 
 if [ "$failures" -ne 0 ]; then
     echo "check-image: promises broken: $failures" >&2

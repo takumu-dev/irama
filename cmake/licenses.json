@@ -15,7 +15,7 @@
   ],
   "fonts": {
     "licenses": ["OFL-1.1"],
-    "ports": []
+    "ports": ["inter"]
   },
   "overrides": []
 }

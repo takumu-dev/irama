@@ -7,8 +7,9 @@
 #
 #   notices  writes THIRD_PARTY_NOTICES.md for what the applications ship, from this build's tree
 #
-# IRAMA_NOTICES_OPTIONS holds the options that check_licenses.cmake takes to work out the notices,
-# for the test that the committed file is up to date.
+# The notices cover every application, so only a build of all of them, which installs every port
+# they ship, has the target. There IRAMA_NOTICES_OPTIONS holds the options that check_licenses.cmake
+# takes to work out the notices, for the test that the committed file is up to date.
 
 include_guard(GLOBAL)
 
@@ -18,9 +19,6 @@ set(irama_license_options
     "-DMANIFEST=${PROJECT_SOURCE_DIR}/vcpkg.json"
     "-DTRIPLET=${VCPKG_TARGET_TRIPLET}"
 )
-# The applications that ship, each with the manifest feature that holds its dependencies.
-set(IRAMA_NOTICES_OPTIONS ${irama_license_options} "-DAPPLICATIONS=cli=irama-cli")
-
 execute_process(
     COMMAND "${CMAKE_COMMAND}" ${irama_license_options} -P "${irama_license_check}"
     RESULT_VARIABLE irama_license_result
@@ -33,6 +31,14 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${irama_license_check}"
 )
 
+if(NOT IRAMA_BUILD_CLI OR NOT IRAMA_BUILD_STUDIO)
+    return()
+endif()
+
+# The applications that ship, each with the manifest feature that holds its dependencies.
+set(IRAMA_NOTICES_OPTIONS ${irama_license_options}
+    "-DAPPLICATIONS=cli=irama-cli,studio=irama-studio"
+)
 add_custom_target(notices
     COMMAND "${CMAKE_COMMAND}" ${IRAMA_NOTICES_OPTIONS}
         "-DWRITE_NOTICES=${PROJECT_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
