@@ -7,6 +7,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
+#include <filesystem>
 #include <string_view>
 #include <vector>
 
@@ -45,6 +46,39 @@ TEST_CASE("Studio refuses --exit-after-frames without a frame count", "[studio]"
     const auto options = irama_studio::parse_options(arguments);
     REQUIRE_FALSE(options.has_value());
     CHECK(options.error() == bad_frame_count);
+}
+
+TEST_CASE("Studio keeps its settings in the directory that --config-dir gives", "[studio]") {
+    constexpr std::array<std::string_view, 4> arguments{
+        "--config-dir",
+        "/tmp/clean start",
+        "--exit-after-frames",
+        "10",
+    };
+    const auto options = irama_studio::parse_options(arguments);
+    REQUIRE(options.has_value());
+    CHECK(options->config_dir == std::filesystem::path{"/tmp/clean start"});
+    CHECK(options->exit_after_frames == 10U);
+}
+
+TEST_CASE("Studio keeps its settings in the user's own directory without --config-dir",
+          "[studio]") {
+    const auto options = irama_studio::parse_options({});
+    REQUIRE(options.has_value());
+    CHECK_FALSE(options->config_dir.has_value());
+}
+
+TEST_CASE("Studio refuses --config-dir without a directory", "[studio]") {
+    const std::vector<std::vector<std::string_view>> command_lines{
+        {"--config-dir"},
+        {"--config-dir", ""},
+    };
+    for (const auto& arguments : command_lines) {
+        CAPTURE(arguments);
+        const auto options = irama_studio::parse_options(arguments);
+        REQUIRE_FALSE(options.has_value());
+        CHECK(options.error() == "irama-studio: --config-dir takes a directory");
+    }
 }
 
 TEST_CASE("an argument Studio doesn't know prints the usage", "[studio]") {

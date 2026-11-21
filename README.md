@@ -70,8 +70,10 @@ turn `IRAMA_BUILD_STUDIO` off, since Studio is built on Linux only. A project th
 subproject gets the same, since the switches are off there by default.
 
 A build with Studio writes it to `build/<preset>/studio/irama-studio`. It starts with the
-Instrument and Audio windows docked side by side, and takes one option, for tests:
-`--exit-after-frames <count>` quits after drawing that many frames.
+Instrument and Audio windows docked side by side, and remembers its window and layout in
+`$XDG_CONFIG_HOME/irama/`, or `~/.config/irama/`. It takes two options: `--config-dir <directory>`
+keeps the settings in another directory, for a clean start, and `--exit-after-frames <count>`, for
+tests, quits after drawing that many frames.
 
 `IRAMA_REALTIME_GUARD` compiles in the real-time guard, which stops the program when code inside a
 render call allocates or frees memory. It is off by default, and on in the three `*-debug` presets

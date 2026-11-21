@@ -7,13 +7,10 @@
 
 namespace irama_studio {
 
-/// The size of the UI font, in logical pixels, before the display's scale.
-inline constexpr float ui_font_size = 15.0F;
-
 /// Inter Regular, the UI font, as the bytes of its TTF file, which the build compiles in.
 [[nodiscard]] std::span<const unsigned char> inter_regular_ttf();
 
-/// Loads the UI font into the current ImGui context, as its default font.
-void load_fonts();
+/// Loads the UI font into the current ImGui context, as its default font, at `size` logical pixels.
+void load_fonts(float size);
 
 } // namespace irama_studio

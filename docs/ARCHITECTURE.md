@@ -138,9 +138,9 @@ the script and the compare tool on goldens wrong in each way, and show that each
 
 ## Irama Studio
 
-Studio opens one window, `Irama Studio`, 1280×800 logical pixels when it opens and resizable, and
-draws [Dear ImGui](https://github.com/ocornut/imgui) in it through SDL3's GPU API, SDL_GPU, which on
-Linux runs on Vulkan. So running Studio on Linux needs a Vulkan driver.
+Studio opens one window, `Irama Studio`, 1280×800 logical pixels the first time it opens and
+resizable, and draws [Dear ImGui](https://github.com/ocornut/imgui) in it through SDL3's GPU API,
+SDL_GPU, which on Linux runs on Vulkan. So running Studio on Linux needs a Vulkan driver.
 
 - **The loop.** Studio has its own `main()` and a plain loop: handle SDL's events, draw a frame, and
   present it with vsync, so it redraws every vsync while the window can be seen. While the window is
@@ -150,8 +150,8 @@ Linux runs on Vulkan. So running Studio on Linux needs a Vulkan driver.
   they work only under some of SDL's video drivers, and never on native Wayland.
 - **The default layout**: File (Quit), View (one toggle for each window) and Help (About) in the
   main menu bar; the Instrument window docked on the left, at two thirds of the width, and the Audio
-  window on the right; and the status bar along the bottom. ImGui writes no `imgui.ini`, so Studio
-  starts with this layout each time.
+  window on the right; and the status bar along the bottom. Studio builds it only when there is no
+  saved layout.
 - **About** shows Studio's name, the release version, its licence, the repository, and a line
   naming `THIRD_PARTY_NOTICES.md`.
 - **HiDPI.** The window is created with SDL's high pixel density, and its sizes are logical pixels.
@@ -163,22 +163,43 @@ Linux runs on Vulkan. So running Studio on Linux needs a Vulkan driver.
   the TTF into a generated source as a byte array, with `cmake/embed_file.cmake`, and ImGui loads it
   from memory, so there is no font file to find beside the executable. The colours are ImGui's own
   dark style.
+- **Settings.** Studio keeps two files in its settings directory: `$XDG_CONFIG_HOME/irama/`, or
+  `~/.config/irama/` where `XDG_CONFIG_HOME` isn't set or isn't an absolute path, or the directory
+  that `--config-dir <directory>` gives. With neither variable set and no option, Studio keeps
+  nothing.
+  - `studio.ini` holds `key = value` lines, which Studio reads and writes itself: `window_width`
+    and `window_height`, the window's size when it isn't maximised, in logical pixels (at least
+    640×400, the window's minimum); `window_maximised` (`true` or `false`); and `font_size`, the UI
+    font's size in logical pixels, from 10 to 24, 15 by default. A key Studio doesn't know is
+    ignored, and a value it can't read, or one out of its range, leaves that setting at its default
+    and the others as read. There is no version key. The window's position isn't kept, since
+    Wayland doesn't let a client place its window.
+  - `imgui.ini` holds ImGui's layout: where the windows are docked, and their sizes. ImGui hands it
+    over as text, through its in-memory load and save functions, with `io.IniFilename` null, so it
+    never writes to the working directory.
+  - A file that is missing or can't be read gives the defaults, never an error. Each file is written
+    one second after its last change, so that a drag writes it once, and again on quit if it has
+    changed since. Each write goes to a temporary file beside it, then renames that over it, so the
+    file always holds a whole version. A file that can't be written is reported on stderr, and
+    Studio carries on.
 - **Start-up failure.** If SDL's video, the window or the GPU device fails, Studio shows SDL's
   error in a message box, prints it to stderr, and exits with status 1.
 
 `irama_studio_core` is laid out in folders, which are not targets of their own: `app/` (the loop,
-the window, the command line), `ui/` (the theme, the font and helpers) and `views/` (what the
-window shows). `irama-studio` is `main.cpp` alone. Studio's tests are one Catch2 program,
+the window, the command line, the settings), `ui/` (the theme, the font and helpers) and `views/`
+(what the window shows). `irama-studio` is `main.cpp` alone. Studio's tests are one Catch2 program,
 `irama_studio_tests` in `tests/studio/`, which tests what needs no window. One of its tests checks
 that SDL was built with its `wayland`, `x11` and `offscreen` video drivers, since SDL quietly leaves
 out a driver whose development packages are missing.
 
 `irama-studio --exit-after-frames <count>` quits after drawing that many frames. The smoke test,
 `cmake/smoke_test.cmake`, runs it for 300 frames under SDL's `offscreen` video driver, with no
-display, and passes only if Studio exits with status 0 and writes nothing to stderr. SDL_GPU draws on
-the machine's own Vulkan driver, and on lavapipe, Mesa's Vulkan driver on the CPU, in CI. The test
-carries the `smoke` label, and runs in every test preset that builds Studio but `clang-tsan`: SDL3
-and the Vulkan driver aren't built with ThreadSanitizer, so their threads would give false reports.
+display, and with `--config-dir` giving an empty directory in the build tree, so it never reads or
+changes the user's settings. It passes only if Studio exits with status 0, writes nothing to
+stderr, and leaves `studio.ini` and `imgui.ini` in that directory. SDL_GPU draws on the machine's
+own Vulkan driver, and on lavapipe, Mesa's Vulkan driver on the CPU, in CI. The test carries the
+`smoke` label, and runs in every test preset that builds Studio but `clang-tsan`: SDL3 and the
+Vulkan driver aren't built with ThreadSanitizer, so their threads would give false reports.
 
 ## Dependencies
 
