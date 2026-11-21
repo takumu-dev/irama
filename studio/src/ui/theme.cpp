@@ -3,16 +3,14 @@
 
 #include "ui/theme.hpp"
 
-#include "ui/fonts.hpp"
-
 #include <imgui.h>
 
 namespace irama_studio {
 
-void apply_theme(float scale) {
+void apply_theme(float scale, float font_size) {
     ImGuiStyle style;
     ImGui::StyleColorsDark(&style);
-    style.FontSizeBase = ui_font_size;
+    style.FontSizeBase = font_size;
     style.ScaleAllSizes(scale);
     style.FontScaleDpi = scale;
     ImGui::GetStyle() = style;

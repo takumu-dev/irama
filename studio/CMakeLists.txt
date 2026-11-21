@@ -29,7 +29,9 @@ set_source_files_properties("${font_source}" PROPERTIES SKIP_LINTING ON)
 
 add_library(irama_studio_core STATIC
     src/app/application.cpp
+    src/app/config_files.cpp
     src/app/options.cpp
+    src/app/settings.cpp
     src/ui/fonts.cpp
     src/ui/theme.cpp
     src/views/about.cpp
