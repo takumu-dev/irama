@@ -14,8 +14,8 @@ departs from them, it says so.
 
 ## Language and build
 
-- libirama, irama-cli and the tests are C++23, as ordinary headers rather than C++ modules, with no
-  compiler extensions. The C API, `irama.h`, is C99, and compiles as C++11 or newer too.
+- libirama, irama-cli, Irama Studio and the tests are C++23, as ordinary headers rather than C++
+  modules, with no compiler extensions. The C API, `irama.h`, is C99, and compiles as C++11 or newer too.
 - The supported compilers are GCC and Clang on Linux, both with libstdc++, and MSVC on Windows,
   with its own standard library. Their floors are GCC 16, Clang 23, libstdc++ 16 and MSVC 14.52,
   and CMake's is 4.4. Floors never fall, and configuring with anything older stops with a message
@@ -39,7 +39,10 @@ departs from them, it says so.
 - `capi` is the C API. It sits on top of the other components rather than among them, and nothing
   links it. `irama::engine` links every other component, and is the internal C++ API that
   irama-cli uses.
-- `cli/` defines executables only, never libraries, so nothing under the GPL can reach libirama.
+- `cli/` defines executables only. `studio/` defines the executable `irama-studio` and the static
+  library `irama_studio_core`, which holds all of Studio but `main()` so that Studio's tests can
+  link it. No libirama target may link either, and the link-closure check stops the configuration
+  if one does, so nothing under the GPL can reach libirama.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) lists the components and what each one links.
 
 ## Naming and spelling
@@ -54,7 +57,8 @@ departs from them, it says so.
 - Macros only where nothing else will do, named `IRAMA_UPPER_CASE`.
 - libirama's C++ code is in the namespace `irama`, and its internals in `irama::detail`. There is no
   namespace per component, since targets and include paths already keep components apart. irama-cli
-  is a client of libirama, not part of it, so it has a namespace of its own, `irama_cli`.
+  and Studio are clients of libirama, not part of it, so each has a namespace of its own,
+  `irama_cli` and `irama_studio`.
 - The C API has rules of its own, under [C API](#c-api).
 - Prose is British: comments, documentation, the README and commit messages. Every identifier is
   American, so a comment that "normalises the colour" sits above `normalize_color`. Identifiers sit
@@ -183,13 +187,19 @@ departs from them, it says so.
 ## Warnings and clang-tidy
 
 - The compiler warnings in `cmake/IramaConventions.cmake` are errors in every preset, through
-  `CMAKE_COMPILE_WARNING_AS_ERROR`. Give a C++ target of irama-cli or the tests its settings with
-  `irama_target_conventions()`; a component gets them from `irama_add_component()`. The settings are
+  `CMAKE_COMPILE_WARNING_AS_ERROR`. Give a C++ target of irama-cli, Studio or the tests its
+  settings with `irama_target_conventions()`; a component gets them from `irama_add_component()`. The settings are
   private to each target, so none of them reaches a game's own targets. Third-party headers come in
   as system includes, so the warnings apply to Irama's own code alone.
 - clang-tidy runs the groups in `.clang-tidy` on every C++ source, with every finding an error,
   in the `tidy` preset. The C sources aren't checked: there are too few of them to be worth a
-  configuration of their own.
+  configuration of their own. Nor is the source the build writes to embed Studio's font, which is
+  only a list of bytes.
+- Studio includes the specific SDL headers it uses, such as `<SDL3/SDL_video.h>`, never the
+  umbrella `<SDL3/SDL.h>`, and combines ImGui's `int` flags with `combine_flags()` from
+  `studio/src/ui/flags.hpp`, never with a bitwise operator on signed values. The `.clang-tidy` in
+  `studio/` turns off `cppcoreguidelines-pro-type-vararg` alone, for ImGui's printf-style functions,
+  whose formats the compilers check.
 - A finding that has to stand is suppressed with `NOLINT(<check>): <reason>` or
   `NOLINTNEXTLINE(<check>): <reason>`, never a bare `NOLINT`. Keep the reason on that line:
   `NOLINTNEXTLINE` covers only the line after its own, and any longer explanation goes in a comment
@@ -219,6 +229,9 @@ departs from them, it says so.
   begins with the same component, which `irama_add_tests()` adds. Checks of the configuration begin
   with `build`, of irama-cli with `cli`, golden cases with `golden`, and the golden harness's own
   checks with `golden harness`.
+- Studio's tests are one Catch2 program, `irama_studio_tests`, in `tests/studio/`, linking
+  `irama_studio_core`. They test what needs no window, carry the `[studio]` tag, and begin with
+  `studio`. The one test that starts Studio itself, headless, carries the `smoke` label.
 - A test file is `<thing>_tests.cpp`, in its component's folder under `tests/unit/`. The check that
   `irama.h` compiles as C99 is the one C source among them, `irama_h_c99_tests.c`, a program of its
   own registered with CTest under the `capi` name. MSVC has no C99 mode, so it builds that file as

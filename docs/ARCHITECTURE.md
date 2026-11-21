@@ -11,15 +11,19 @@ SPDX-License-Identifier: Zlib
 |---|---|---|---|
 | libirama | `libirama/` | The library that games and apps embed. | zlib |
 | irama-cli | `cli/` | A command-line tool built on libirama. | GPL-3.0-or-later |
+| Irama Studio | `studio/` | The tracker itself, a window built on libirama. | GPL-3.0-or-later |
 
 libirama has two interfaces:
 
 - **The C API**, `libirama/include/irama/irama.h`, is what games and apps use. It is plain C99, so
   a game written in C can include it, and it compiles as C++11 or newer too.
-- **The internal C++ API**, the `irama::engine` target, is what irama-cli uses. It promises no
-  stability, since irama-cli is only ever built against the libirama beside it.
+- **The internal C++ API**, the `irama::engine` target, is what irama-cli and Studio use. It
+  promises no stability, since they are only ever built against the libirama beside them.
 
-`cli/` defines executables only, never libraries, so nothing under the GPL can reach libirama.
+`cli/` defines executables only. `studio/` defines the executable `irama-studio` and the static
+library `irama_studio_core`, which holds all of Studio but `main()`, so that Studio's tests can link
+it. No libirama target links either: the link-closure check below stops the configuration if one
+does, so nothing under the GPL can reach libirama.
 
 ## Components
 
@@ -95,12 +99,65 @@ most 512 KiB, about 1.3 seconds, unless its case allows more. Only the `gcc-rele
 goldens, so that they don't drift between compilers. The checks under `tests/golden/harness/` run
 the script and the compare tool on goldens wrong in each way, and show that each one fails.
 
+## Irama Studio
+
+Studio opens one window, `Irama Studio`, 1280×800 logical pixels when it opens and resizable, and
+draws [Dear ImGui](https://github.com/ocornut/imgui) in it through SDL3's GPU API, SDL_GPU, which on
+Linux runs on Vulkan. So running Studio on Linux needs a Vulkan driver.
+
+- **The loop.** Studio has its own `main()` and a plain loop: handle SDL's events, draw a frame, and
+  present it with vsync, so it redraws every vsync while the window can be seen. While the window is
+  minimised or hidden, the loop waits for the next event instead.
+- **Docking.** Windows dock inside the main window only, in a dock space that fills it between the
+  main menu bar and the status bar. ImGui's windows of their own, outside the main window, are off:
+  they work only under some of SDL's video drivers, and never on native Wayland.
+- **The default layout**: File (Quit), View (one toggle for each window) and Help (About) in the
+  main menu bar; the Instrument window docked on the left, at two thirds of the width, and the Audio
+  window on the right; and the status bar along the bottom. ImGui writes no `imgui.ini`, so Studio
+  starts with this layout each time.
+- **About** shows Studio's name, the release version, its licence, the repository, and a line
+  naming `THIRD_PARTY_NOTICES.md`.
+- **HiDPI.** The window is created with SDL's high pixel density, and its sizes are logical pixels.
+  ImGui works in the window's own coordinates, and its SDL backend draws at the window's pixel
+  density, so Studio scales the window, the style's sizes and the fonts by the rest of the display
+  scale: the content scale the user chose. It scales a fresh style each time the display scale
+  changes.
+- **The font** is Inter Regular at 15 logical pixels, from the `inter` overlay port. The build writes
+  the TTF into a generated source as a byte array, with `cmake/embed_file.cmake`, and ImGui loads it
+  from memory, so there is no font file to find beside the executable. The colours are ImGui's own
+  dark style.
+- **Start-up failure.** If SDL's video, the window or the GPU device fails, Studio shows SDL's
+  error in a message box, prints it to stderr, and exits with status 1.
+
+`irama_studio_core` is laid out in folders, which are not targets of their own: `app/` (the loop,
+the window, the command line), `ui/` (the theme, the font and helpers) and `views/` (what the
+window shows). `irama-studio` is `main.cpp` alone. Studio's tests are one Catch2 program,
+`irama_studio_tests` in `tests/studio/`, which tests what needs no window. One of its tests checks
+that SDL was built with its `wayland`, `x11` and `offscreen` video drivers, since SDL quietly leaves
+out a driver whose development packages are missing.
+
+`irama-studio --exit-after-frames <count>` quits after drawing that many frames. The smoke test,
+`cmake/smoke_test.cmake`, runs it for 300 frames under SDL's `offscreen` video driver, with no
+display, and passes only if Studio exits with status 0 and writes nothing to stderr. SDL_GPU draws on
+the machine's own Vulkan driver, and on lavapipe, Mesa's Vulkan driver on the CPU, in CI. The test
+carries the `smoke` label, and runs in every test preset that builds Studio but `clang-tsan`: SDL3
+and the Vulkan driver aren't built with ThreadSanitizer, so their threads would give false reports.
+
 ## Dependencies
 
 Every dependency comes from `vcpkg.json`. libirama's are its top-level dependencies, and each other
-part's are a manifest feature. An overlay port in `ports/`, which `vcpkg-configuration.json` puts
-ahead of vcpkg's own, pins a dependency to a newer upstream commit than vcpkg's port has: `drlibs`,
-for the bounds fixes in dr_flac 0.13.4 and after.
+part's are a manifest feature. Studio's are SDL3, with its default features off and `vulkan`, plus
+`wayland` and `x11` on Linux; Dear ImGui's docking branch, with its SDL3 and SDL_GPU backends; and
+Inter. The overlay ports in `ports/`, which `vcpkg-configuration.json` puts ahead of vcpkg's own,
+stand in for ports that vcpkg lacks or that don't yet do what Irama needs:
+
+- `drlibs` pins dr_libs to a newer upstream commit than vcpkg's port has, for the bounds fixes in
+  dr_flac 0.13.4 and after.
+- `imgui` is vcpkg's own port with one change: its SDL3 backends ask for SDL3 without its default
+  features. vcpkg's port asks for them, and so would bring in D-Bus, ibus and their own dependencies,
+  whatever `vcpkg.json` says. Its files keep vcpkg's MIT licence.
+- `inter` installs Inter Regular, the static TTF from the release, with its licence, and a CMake
+  package that gives the TTF's path. vcpkg has no port for it.
 
 Every configuration checks the licence of each port vcpkg installed against one of two allowlists
 in `cmake/licenses.json`:
@@ -116,18 +173,20 @@ list. Configuring fails, naming each port whose list doesn't cover it.
 
 `THIRD_PARTY_NOTICES.md` lists the libraries the applications ship, from their features in
 `vcpkg.json` and what those depend on, with the applications that use each. Build the `notices`
-target to rewrite it. A test fails when it is out of date.
+target to rewrite it, in a configuration that builds every application. A test there fails when it
+is out of date.
 
 ## Version
 
-libirama and irama-cli share one version, written in `irama.h` as `IRAMA_VERSION_MAJOR`,
+libirama, irama-cli and Studio share one version, written in `irama.h` as `IRAMA_VERSION_MAJOR`,
 `IRAMA_VERSION_MINOR` and `IRAMA_VERSION_PATCH`. The top-level `CMakeLists.txt` reads those macros
 to set the project's version, so there is no second copy to keep in step.
 
 - A game compares `irama_version()`, the version of the library it runs with, with
   `IRAMA_VERSION`, the version of the header it compiled against.
 - irama-cli doesn't include `irama.h`, which belongs to `capi`. It gets the project's version as
-  the compile definition `IRAMA_VERSION_STRING`, and prints it for `irama-cli --version`.
+  the compile definition `IRAMA_VERSION_STRING`, and prints it for `irama-cli --version`. Studio
+  gets it the same way, and shows it in its About window.
 
 The tests check that all of these agree.
 
@@ -135,7 +194,7 @@ The tests check that all of these agree.
 
 | Folder or file | What it holds |
 |---|---|
-| `CMakeLists.txt` | The project, the part switches, the real-time guard's switch, and the version read from `irama.h`. |
+| `CMakeLists.txt` | The project, the part switches (`IRAMA_BUILD_CLI`, `IRAMA_BUILD_STUDIO` and `IRAMA_BUILD_TESTS`), the real-time guard's switch, and the version read from `irama.h`. |
 | `CMakePresets.json` | Every supported configuration, each with a workflow preset. |
 | `vcpkg.json` | The dependencies: libirama's at the top level, each other part's as a feature. |
 | `vcpkg-configuration.json`, `ports/` | The overlay ports, which stand in for vcpkg's own. |
@@ -148,7 +207,10 @@ The tests check that all of these agree.
 | `.clang-format`, `.clang-tidy`, `Doxyfile` | The settings of those checks. |
 | `cmake/expect_abort.cmake` | Runs a program that must abort, and checks its report. |
 | `cmake/golden_test.cmake` | Runs a golden case, or writes its golden. |
-| `tests/` | The tests, one folder per component under `unit/`, the programs that must abort under `abort/`, the golden cases and the compare tool under `golden/`, and the CLI and configuration checks. |
+| `cmake/smoke_test.cmake` | Starts Studio headless and checks that it quits cleanly. |
+| `cmake/embed_file.cmake` | Writes a file's bytes into a C++ source, for Studio's font. |
+| `studio/` | Irama Studio: `irama_studio_core`, `irama-studio`, and the `.clang-tidy` that lets ImGui's printf-style functions through. |
+| `tests/` | The tests, one folder per component under `unit/`, the programs that must abort under `abort/`, the golden cases and the compare tool under `golden/`, Studio's tests under `studio/`, and the CLI and configuration checks. |
 | `ci/` | The CI's Linux image, under `linux/`, the Windows job's scripts, under `windows/`, and the scripts the Linux jobs share. |
 | `THIRD_PARTY_NOTICES.md` | The notices of the libraries the applications ship. |
 | `REUSE.toml`, `LICENSES/` | The licences of files that can't hold a comment, and their texts. |

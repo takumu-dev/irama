@@ -10,6 +10,35 @@
     "cli": {
       "description": "What irama-cli needs"
     },
+    "studio": {
+      "description": "What Irama Studio needs",
+      "dependencies": [
+        {
+          "name": "imgui",
+          "features": [
+            "docking-experimental",
+            "sdl3-binding",
+            "sdlgpu3-binding"
+          ]
+        },
+        "inter",
+        {
+          "name": "sdl3",
+          "default-features": false,
+          "features": [
+            "vulkan",
+            {
+              "name": "wayland",
+              "platform": "linux"
+            },
+            {
+              "name": "x11",
+              "platform": "linux"
+            }
+          ]
+        }
+      ]
+    },
     "tests": {
       "description": "What the tests need, and nothing that ships",
       "dependencies": [

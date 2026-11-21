@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 takumu-dev
 # SPDX-License-Identifier: Zlib
 
-# Irama: libirama, the library that plays songs, and irama-cli, which drives it from the command
-# line.
+# Irama: libirama, the library that plays songs; irama-cli, which drives it from the command line;
+# and Irama Studio, the tracker itself.
 #
 # Every supported build is a preset in CMakePresets.json, so a developer and CI run the same
 # `cmake --workflow --preset <preset>`. Dependencies come only through find_package from the vcpkg
@@ -25,8 +25,9 @@ endforeach()
 # switch and its dependencies can't disagree. With every switch off, only libirama builds.
 string(COMPARE EQUAL "${CMAKE_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}" irama_is_top_level)
 option(IRAMA_BUILD_CLI "Build irama-cli." ${irama_is_top_level})
+option(IRAMA_BUILD_STUDIO "Build Irama Studio." ${irama_is_top_level})
 option(IRAMA_BUILD_TESTS "Build the tests." ${irama_is_top_level})
-foreach(part IN ITEMS cli tests)
+foreach(part IN ITEMS cli studio tests)
     string(TOUPPER "${part}" switch)
     if(IRAMA_BUILD_${switch})
         list(APPEND VCPKG_MANIFEST_FEATURES "${part}")
@@ -69,6 +70,10 @@ add_subdirectory(libirama)
 
 if(IRAMA_BUILD_CLI)
     add_subdirectory(cli)
+endif()
+
+if(IRAMA_BUILD_STUDIO)
+    add_subdirectory(studio)
 endif()
 
 if(IRAMA_BUILD_TESTS)
