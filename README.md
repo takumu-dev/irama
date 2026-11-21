@@ -75,6 +75,13 @@ Instrument and Audio windows docked side by side, and remembers its window and l
 keeps the settings in another directory, for a clean start, and `--exit-after-frames <count>`, for
 tests, quits after drawing that many frames.
 
+Studio plays through the system's default sound device, by PulseAudio, which PipeWire serves too,
+or by ALSA where there is no PulseAudio server, and runs silent where neither works. The computer
+keyboard is a piano of two rows: `Z` to `/` from C of the keyboard octave, and `Q` to `P` from the
+octave above, by the keys' positions on a US keyboard, so every layout plays the same. Numpad `/`
+and `*`, or the buttons in the status bar, lower and raise the octave, from 0 to 8, so that at the
+default of 4, `Z` plays C-4.
+
 `IRAMA_REALTIME_GUARD` compiles in the real-time guard, which stops the program when code inside a
 render call allocates or frees memory. It is off by default, and on in the three `*-debug` presets
 and `tidy`.

@@ -5,8 +5,14 @@
 # irama_studio_core, and the smoke test, which starts Studio itself.
 
 add_executable(irama_studio_tests
+    audio_device_tests.cpp
     config_files_tests.cpp
+    key_map_tests.cpp
+    message_backlog_tests.cpp
+    meter_display_tests.cpp
+    note_keys_tests.cpp
     options_tests.cpp
+    play_tests.cpp
     settings_tests.cpp
     video_drivers_tests.cpp
 )

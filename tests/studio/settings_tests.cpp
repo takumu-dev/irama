@@ -22,6 +22,7 @@ TEST_CASE("studio.ini reads back every setting it was written with", "[studio]")
         .window_height = 900,
         .window_maximized = true,
         .font_size = 18,
+        .octave = 2,
     };
     CHECK(irama_studio::parse_settings(irama_studio::format_settings(settings)) == settings);
 }
@@ -30,7 +31,8 @@ TEST_CASE("studio.ini holds one key = value line for each setting", "[studio]") 
     CHECK(irama_studio::format_settings(Settings{}) == "window_width = 1280\n"
                                                        "window_height = 800\n"
                                                        "window_maximised = false\n"
-                                                       "font_size = 15\n");
+                                                       "font_size = 15\n"
+                                                       "octave = 4\n");
 }
 
 TEST_CASE("studio.ini ignores keys it doesn't know", "[studio]") {
@@ -46,13 +48,15 @@ TEST_CASE("a bad value in studio.ini leaves that setting alone at its default", 
     const std::string good_lines = "window_width = 1000\n"
                                    "window_height = 700\n"
                                    "window_maximised = true\n"
-                                   "font_size = 20\n";
+                                   "font_size = 20\n"
+                                   "octave = 6\n";
     const Settings good = irama_studio::parse_settings(good_lines);
     REQUIRE(good == Settings{
                         .window_width = 1000,
                         .window_height = 700,
                         .window_maximized = true,
                         .font_size = 20,
+                        .octave = 6,
                     });
 
     // The good settings, with one of them back at its default.
@@ -76,6 +80,7 @@ TEST_CASE("a bad value in studio.ini leaves that setting alone at its default", 
     check("window_height", {"800px", "399", "16385", "-700"}, good_but(&Settings::window_height));
     check("window_maximised", {"yes", "1", "TRUE", ""}, good_but(&Settings::window_maximized));
     check("font_size", {"9", "25", "15.5", "", "big"}, good_but(&Settings::font_size));
+    check("octave", {"-1", "9", "4.5", "", "high"}, good_but(&Settings::octave));
 }
 
 TEST_CASE("studio.ini reads spaces, tabs and Windows line endings around its keys and values",

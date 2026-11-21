@@ -6,9 +6,14 @@
 #include "app/config_files.hpp"
 #include "app/options.hpp"
 #include "app/settings.hpp"
+#include "audio/audio_engine.hpp"
+#include "audio/meter_display.hpp"
+#include "input/note_keys.hpp"
+#include "input/note_message.hpp"
 #include "ui/flags.hpp"
 #include "ui/fonts.hpp"
 #include "ui/theme.hpp"
+#include "views/status_bar.hpp"
 #include "views/workspace.hpp"
 #include <irama/engine/base/narrow.hpp>
 
@@ -16,6 +21,7 @@
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_gpu.h>
 #include <SDL3/SDL_init.h>
+#include <SDL3/SDL_keycode.h>
 #include <SDL3/SDL_messagebox.h>
 #include <SDL3/SDL_pixels.h>
 #include <SDL3/SDL_video.h>
@@ -180,9 +186,31 @@ class SettingsFiles {
     std::optional<DelayedFile> layout_file_;
 };
 
+// Whether a key going down may play a note or step the octave: not while ImGui takes typed text,
+// and not with Ctrl, Alt or Super held, which make the key a shortcut.
+[[nodiscard]] bool may_play(const SDL_KeyboardEvent& key) {
+    constexpr SDL_Keymod shortcut_modifiers = SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI;
+    return !ImGui::GetIO().WantTextInput && (key.mod & shortcut_modifiers) == 0;
+}
+
+// Plays a key going down or up on the note keys. SDL's scancodes are USB HID usage IDs, which the
+// note keys read. A key going up always ends the note it started.
+void handle_key(const SDL_KeyboardEvent& key, NoteKeys& keys, AudioEngine& engine) {
+    const int usage = static_cast<int>(key.scancode);
+    std::optional<NoteMessage> message;
+    if (!key.down) {
+        message = keys.release(usage);
+    } else if (may_play(key)) {
+        message = keys.press(usage, key.repeat);
+    }
+    if (message) {
+        engine.send(*message);
+    }
+}
+
 // Handles the events waiting in SDL's queue, and returns false once the user has asked to quit.
 [[nodiscard]] bool handle_events(SDL_Window* window, float font_size, Settings& settings,
-                                 SettingsFiles& files) {
+                                 SettingsFiles& files, NoteKeys& keys, AudioEngine& engine) {
     bool keep_running = true;
     SDL_Event event{};
     while (SDL_PollEvent(&event)) {
@@ -191,6 +219,11 @@ class SettingsFiles {
                             event.window.windowID == SDL_GetWindowID(window);
         if (event.type == SDL_EVENT_QUIT || closed) {
             keep_running = false;
+        } else if (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) {
+            handle_key(event.key, keys, engine);
+        } else if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
+            // The keys still held will go up where Studio can't see them.
+            engine.send(keys.release_all());
         } else if (event.type == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED) {
             apply_theme(content_scale(window), font_size);
         } else if (event.type == SDL_EVENT_WINDOW_RESIZED ||
@@ -314,7 +347,15 @@ int run(const Options& options) {
         ImGui_ImplSDLGPU3_Shutdown();
     }};
 
+    // Studio plays through the system default device. With none, it runs silent, and the Audio
+    // window says why.
+    AudioEngine engine{studio_backends};
+    static_cast<void>(engine.open());
+    NoteKeys keys{settings.octave};
+    MeterDisplay meters;
+
     Workspace workspace;
+    StatusBar status;
     std::uint64_t frames = 0;
     bool running = true;
     while (running) {
@@ -323,20 +364,33 @@ int run(const Options& options) {
         if ((SDL_GetWindowFlags(window) & hidden) != 0) {
             SDL_WaitEvent(nullptr);
         }
-        if (!handle_events(window, font_size, settings, files)) {
+        if (!handle_events(window, font_size, settings, files, keys, engine)) {
             running = false;
         }
+        engine.flush();
+        meters.update(
+            MeterDisplay::Clock::now(), [&engine] { return engine.take_cpu_peak(); },
+            engine.take_clipped());
 
+        status.octave = keys.octave();
+        status.voices = engine.active_voices();
+        status.cpu_peak = meters.cpu_peak();
+        status.clipping = meters.clipping();
         ImGui_ImplSDLGPU3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
-        if (!workspace.draw()) {
+        if (!workspace.draw(status, engine)) {
             running = false;
         }
         ImGui::Render();
         render(device, window);
 
         const DelayedFile::Clock::time_point now = DelayedFile::Clock::now();
+        keys.set_octave(keys.octave() + status.octave_step);
+        if (keys.octave() != settings.octave) {
+            settings.octave = keys.octave();
+            files.change_settings(settings, now);
+        }
         if (io.WantSaveIniSettings) {
             io.WantSaveIniSettings = false;
             files.change_layout(ImGui::SaveIniSettingsToMemory(), now);

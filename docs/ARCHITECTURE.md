@@ -214,8 +214,9 @@ SDL_GPU, which on Linux runs on Vulkan. So running Studio on Linux needs a Vulka
   they work only under some of SDL's video drivers, and never on native Wayland.
 - **The default layout**: File (Quit), View (one toggle for each window) and Help (About) in the
   main menu bar; the Instrument window docked on the left, at two thirds of the width, and the Audio
-  window on the right; and the status bar along the bottom. Studio builds it only when there is no
-  saved layout.
+  window on the right; and the status bar along the bottom, with the keyboard octave between a −
+  and a + button, the voice count, the CPU meter, and a red CLIP for one second after the last
+  clipped sample. Studio builds the layout only when there is no saved one.
 - **About** shows Studio's name, the release version, its licence, the repository, and a line
   naming `THIRD_PARTY_NOTICES.md`.
 - **HiDPI.** The window is created with SDL's high pixel density, and its sizes are logical pixels.
@@ -234,7 +235,8 @@ SDL_GPU, which on Linux runs on Vulkan. So running Studio on Linux needs a Vulka
   - `studio.ini` holds `key = value` lines, which Studio reads and writes itself: `window_width`
     and `window_height`, the window's size when it isn't maximised, in logical pixels (at least
     640×400, the window's minimum); `window_maximised` (`true` or `false`); and `font_size`, the UI
-    font's size in logical pixels, from 10 to 24, 15 by default. A key Studio doesn't know is
+    font's size in logical pixels, from 10 to 24, 15 by default; and `octave`, the keyboard octave,
+    from 0 to 8, 4 by default. A key Studio doesn't know is
     ignored, and a value it can't read, or one out of its range, leaves that setting at its default
     and the others as read. There is no version key. The window's position isn't kept, since
     Wayland doesn't let a client place its window.
@@ -249,18 +251,78 @@ SDL_GPU, which on Linux runs on Vulkan. So running Studio on Linux needs a Vulka
 - **Start-up failure.** If SDL's video, the window or the GPU device fails, Studio shows SDL's
   error in a message box, prints it to stderr, and exits with status 1.
 
+### Sound and the note keys
+
+Studio plays through two layers in `studio/src/audio/`:
+
+- **`AudioDevice`** wraps [miniaudio](https://github.com/mackron/miniaudio) and knows nothing of
+  Irama. It owns one `ma_context`, started on the first backend in its list that works, and at most
+  one `ma_device` on it, which plays interleaved stereo 32-bit float frames from a
+  `void(std::span<float>)` callback. Opening a device reports what it was granted: the backend, the
+  rate, the number of frames in each callback and the device's name, or the error that stopped it.
+  The callback runs only once the device is started, so the caller can first prepare for the rate.
+  Closing is always `ma_device_stop()` then `ma_device_uninit()`, since uninitialising a device that
+  has lost its server otherwise waits forever. The context asks for real-time priority for the
+  device's thread, which miniaudio lowers to normal where the system refuses it. miniaudio's
+  implementation compiles in Studio's own `miniaudio.cpp`, with each preset's flags, so the
+  sanitizers instrument its threads too.
+- **`AudioEngine`** holds the device and, only while it is open, an `irama::Player` with 32 voices
+  at the device's rate. Studio's backends are PulseAudio, then ALSA. It opens the system default
+  device at the device's own rate, and if that isn't one of the player's, 44.1, 48, 88.2 or
+  96 kHz, opens it again at 48 kHz for the backend to convert. Each callback has exactly 256 frames,
+  and miniaudio's own clipping is off. With no backend or device working, Studio runs silent, and
+  the Audio window says why.
+
+The audio callback carries `IRAMA_NONBLOCKING` and opens its own `irama::RenderScope`, which the
+player's scope nests in, so the real-time checks watch Studio's own work in the callback as well as
+the render. It renders the player, clips each sample to [−1, 1], and reports to the UI thread
+through relaxed atomics only: the peak of its run time over its period (the frames it rendered
+over the rate), timed with `std::chrono::steady_clock`; whether it clipped; the peak magnitude it
+played; and a heartbeat, a count of its runs. The UI thread takes the CPU peak every half second,
+resetting it, and shows it as a percentage.
+
+The note keys, in `studio/src/input/`, include no SDL header: they take USB HID usage IDs, which
+SDL's scancodes are, so the piano rows are the same keys on every keyboard layout. At keyboard
+octave O, the lower row `Z S X D C V G B H N J M` plays C to B of O and `, L . ; /` C to E of O+1,
+and the upper row `Q 2 W 3 E R 5 T 6 Y 7 U` plays C to B of O+1 and `I 9 O 0 P` C to E of O+2, as
+a US keyboard labels the keys. The octave runs from 0 to 8, 4 by default, so `Z` plays C-4, and a
+key whose note would pass B-9 plays nothing. Numpad `/` lowers it and Numpad `*` raises it.
+
+- Every note key plays at velocity 1, and key repeats are ignored.
+- A key's note is remembered when it goes down, so a key released after an octave change ends the
+  note it started. A note-off releases every voice on its note, so the held keys are counted for
+  each note, and only the release of the last key holding a note sends its note-off.
+- A key going down plays nothing while ImGui takes typed text, or while Ctrl, Alt or Super is held.
+  A key going up always ends its note. When the window loses focus, Studio sends release-all and
+  forgets the held keys.
+- Studio's messages name frame 0, so each applies at the start of the player's next render call.
+  A message the player's queue refuses waits in a backlog on the UI thread, and the backlog is sent
+  first, in order, before any new message and again each frame. With no device open there is no
+  player, and the note keys do nothing.
+
+So Studio runs three kinds of thread: the UI thread, which handles events, draws, and makes every
+call on the device, the engine and the player's control functions; the device's thread, miniaudio's
+own, which runs the callback; and the backend's threads, such as PulseAudio's, which Studio never
+touches.
+
 `irama_studio_core` is laid out in folders, which are not targets of their own: `app/` (the loop,
-the window, the command line, the settings), `ui/` (the theme, the font and helpers) and `views/`
-(what the window shows). `irama-studio` is `main.cpp` alone. Studio's tests are one Catch2 program,
+the window, the command line, the settings), `audio/` (the device, the engine and its meters),
+`input/` (the note keys), `ui/` (the theme, the font and helpers) and `views/` (what the window
+shows). `irama-studio` is `main.cpp` alone. Studio's tests are one Catch2 program,
 `irama_studio_tests` in `tests/studio/`, which tests what needs no window. One of its tests checks
 that SDL was built with its `wayland`, `x11` and `offscreen` video drivers, since SDL quietly leaves
-out a driver whose development packages are missing.
+out a driver whose development packages are missing. The play test opens the engine on miniaudio's
+Null backend, a device with no hardware that a timer drives on miniaudio's own thread, plays a chord
+through the note keys and lets the real callback render it: so the real-time guard and every
+sanitizer watch Studio's callback while it plays.
 
 `irama-studio --exit-after-frames <count>` quits after drawing that many frames. The smoke test,
 `cmake/smoke_test.cmake`, runs it for 300 frames under SDL's `offscreen` video driver, with no
 display, and with `--config-dir` giving an empty directory in the build tree, so it never reads or
 changes the user's settings. It passes only if Studio exits with status 0, writes nothing to
-stderr, and leaves `studio.ini` and `imgui.ini` in that directory. SDL_GPU draws on the machine's
+stderr, and leaves `studio.ini` and `imgui.ini` in that directory. It passes whether or not a
+sound device opens, since Studio runs silent without one, as it does in CI, which has no sound
+server. SDL_GPU draws on the machine's
 own Vulkan driver, and on lavapipe, Mesa's Vulkan driver on the CPU, in CI. The test carries the
 `smoke` label, and runs in every test preset that builds Studio but `clang-tsan`: SDL3 and the
 Vulkan driver aren't built with ThreadSanitizer, so their threads would give false reports.
@@ -269,8 +331,8 @@ Vulkan driver aren't built with ThreadSanitizer, so their threads would give fal
 
 Every dependency comes from `vcpkg.json`. libirama's are its top-level dependencies, and each other
 part's are a manifest feature. Studio's are SDL3, with its default features off and `vulkan`, plus
-`wayland` and `x11` on Linux; Dear ImGui's docking branch, with its SDL3 and SDL_GPU backends; and
-Inter. The overlay ports in `ports/`, which `vcpkg-configuration.json` puts ahead of vcpkg's own,
+`wayland` and `x11` on Linux; Dear ImGui's docking branch, with its SDL3 and SDL_GPU backends;
+miniaudio; and Inter. The overlay ports in `ports/`, which `vcpkg-configuration.json` puts ahead of vcpkg's own,
 stand in for ports that vcpkg lacks or that don't yet do what Irama needs:
 
 - `drlibs` pins dr_libs to a newer upstream commit than vcpkg's port has, for the bounds fixes in
