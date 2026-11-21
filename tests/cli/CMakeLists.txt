@@ -75,6 +75,10 @@ irama_add_cli_test("synth plays a chord script"
     ARGUMENTS synth "${CMAKE_CURRENT_BINARY_DIR}/chord.wav" --script "${scripts}/chord.txt"
     QUIET
 )
+irama_add_cli_test("synth plays a script that sets parameters"
+    ARGUMENTS synth "${CMAKE_CURRENT_BINARY_DIR}/parameters.wav" --script "${scripts}/parameters.txt"
+    QUIET
+)
 foreach(rate IN ITEMS 44100 48000 88200 96000)
     irama_add_cli_test("synth renders at ${rate} Hz"
         ARGUMENTS synth "${CMAKE_CURRENT_BINARY_DIR}/chord-${rate}.wav" --script "${scripts}/chord.txt"
@@ -108,7 +112,7 @@ endfunction()
 irama_add_script_test("a malformed line" malformed 5 "expected `at <frame> <command>`")
 irama_add_script_test("a word after a command" extra-word 4 "note-on takes a note and a velocity")
 irama_add_script_test("a command it doesn't know" unknown-command 4
-    "unknown command `set-parameter`, expected note-on, note-off or release-all"
+    "unknown command `pitch-bend`, expected note-on, note-off, release-all or set-parameter"
 )
 irama_add_script_test("a note out of range" note-out-of-range 4
     "note C-10 is out of range, C-0 to B-9"
@@ -121,4 +125,16 @@ irama_add_script_test("a velocity out of range" velocity-out-of-range 5
 )
 irama_add_script_test("a frame out of order" frame-out-of-order 5
     "frame 99 is before frame 100 on an earlier line"
+)
+irama_add_script_test("a parameter the instrument doesn't have" unknown-parameter 5
+    "unknown parameter 4242"
+)
+irama_add_script_test("a parameter that isn't an ID" not-a-parameter 4
+    "`gain` isn't a parameter ID, a whole number from 0"
+)
+irama_add_script_test("a parameter value that isn't a number" not-a-value 4
+    "`loud` isn't a parameter value, a number"
+)
+irama_add_script_test("a set-parameter without a value" missing-value 4
+    "set-parameter takes a parameter ID and a value"
 )

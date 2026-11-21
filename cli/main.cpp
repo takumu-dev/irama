@@ -256,6 +256,8 @@ struct SynthOptions {
         return player.note_off(message.frame, message.note);
     case ScriptMessage::Kind::release_all:
         return player.release_all(message.frame);
+    case ScriptMessage::Kind::set_parameter:
+        return player.set_parameter(message.frame, message.param, message.value);
     }
     return false;
 }

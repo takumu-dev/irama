@@ -1,0 +1,276 @@
+// SPDX-FileCopyrightText: 2026 takumu-dev
+// SPDX-License-Identifier: Zlib
+
+#include <irama/engine/voice/instrument.hpp>
+
+#include <irama/engine/base/nonblocking.hpp>
+#include <irama/engine/base/render_scope.hpp>
+#include <irama/engine/param/param_descriptor.hpp>
+#include <irama/engine/param/param_id.hpp>
+#include <irama/engine/voice/adsr.hpp>
+
+#include <catch2/catch_message.hpp>
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <numbers>
+#include <span>
+#include <vector>
+
+namespace {
+
+using Catch::Matchers::WithinAbs;
+using Catch::Matchers::WithinRel;
+using irama::InstrumentParam;
+using irama::ParamScale;
+
+constexpr float rate = 48'000.0F;
+
+// 20 ms at 48 kHz.
+constexpr std::size_t ramp_frames = 960;
+
+// The index of one of the instrument's parameters, or one past the table's end, which any use
+// of it catches, for an ID it hasn't.
+[[nodiscard]] std::size_t index_of(irama::ParamId id) {
+    return irama::find_param(irama::instrument_params, id)
+        .value_or(irama::instrument_params.size());
+}
+
+// One instrument's values for the voices, gathered over several blocks.
+struct Rendered {
+    std::vector<float> sustain;
+    std::vector<float> left_gain;
+    std::vector<float> right_gain;
+};
+
+// Renders as the player does, inside a render scope, so the real-time checks watch the instrument.
+[[nodiscard]] irama::InstrumentBlock render_block(irama::Instrument& instrument,
+                                                  std::size_t frames) IRAMA_NONBLOCKING {
+    const irama::RenderScope scope;
+    return instrument.render(frames);
+}
+
+// Renders the instrument's next frames in the largest blocks it takes.
+[[nodiscard]] Rendered render(irama::Instrument& instrument, std::size_t frames) {
+    Rendered rendered;
+    for (std::size_t done = 0; done < frames; done += irama::Instrument::max_block_frames) {
+        const irama::InstrumentBlock block =
+            render_block(instrument, std::min(irama::Instrument::max_block_frames, frames - done));
+        rendered.sustain.insert(rendered.sustain.end(), block.sustain.begin(), block.sustain.end());
+        rendered.left_gain.insert(rendered.left_gain.end(), block.left_gain.begin(),
+                                  block.left_gain.end());
+        rendered.right_gain.insert(rendered.right_gain.end(), block.right_gain.begin(),
+                                   block.right_gain.end());
+    }
+    return rendered;
+}
+
+[[nodiscard]] double decibels(double gain) { return 20.0 * std::log10(gain); }
+
+// One row of the basic synth's table, as the instrument must declare it.
+struct Row {
+    std::uint32_t id = 0;
+    float min = 0.0F;
+    float max = 0.0F;
+    float default_value = 0.0F;
+    ParamScale scale = ParamScale::linear;
+    float smoothing_seconds = 0.0F;
+};
+
+constexpr auto basic_synth = std::to_array<Row>({
+    {.id = 10'000, .max = 3, .default_value = 2, .scale = ParamScale::stepped},
+    {.id = 10'001, .max = 100, .default_value = 100, .smoothing_seconds = 0.02F},
+    {.id = 10'002, .min = 5, .max = 95, .default_value = 50, .smoothing_seconds = 0.02F},
+    {.id = 10'003, .min = -24, .max = 24, .scale = ParamScale::stepped},
+    {.id = 10'004, .min = -100, .max = 100, .smoothing_seconds = 0.02F},
+    {.id = 10'090, .max = 100, .smoothing_seconds = 0.02F},
+    {.id = 1'000, .max = 3, .scale = ParamScale::stepped},
+    {.id = 1'001, .max = 1, .scale = ParamScale::stepped},
+    {
+        .id = 1'002,
+        .min = 20,
+        .max = 20'000,
+        .default_value = 20'000,
+        .scale = ParamScale::logarithmic,
+        .smoothing_seconds = 0.02F,
+    },
+    {.id = 1'003, .max = 100, .smoothing_seconds = 0.02F},
+    {.id = 2'000, .min = -60, .max = 12, .default_value = -12, .smoothing_seconds = 0.02F},
+    {.id = 2'001, .min = -1, .max = 1, .smoothing_seconds = 0.02F},
+    {.id = 2'002, .max = 100, .default_value = 100},
+    {
+        .id = 3'000,
+        .min = 0.001F,
+        .max = 10,
+        .default_value = 0.002F,
+        .scale = ParamScale::logarithmic,
+    },
+    {
+        .id = 3'001,
+        .min = 0.001F,
+        .max = 10,
+        .default_value = 0.3F,
+        .scale = ParamScale::logarithmic,
+    },
+    {.id = 3'002, .max = 100, .default_value = 70, .smoothing_seconds = 0.02F},
+    {
+        .id = 3'003,
+        .min = 0.001F,
+        .max = 20,
+        .default_value = 0.2F,
+        .scale = ParamScale::logarithmic,
+    },
+    {.id = 3'004, .min = -1, .max = 1},
+    {.id = 3'005, .min = -1, .max = 1, .default_value = 0.5F},
+    {.id = 3'006, .min = -1, .max = 1, .default_value = 0.5F},
+});
+
+[[nodiscard]] bool matches(const irama::ParamDescriptor& param, const Row& row) {
+    return param.min == row.min && param.max == row.max &&
+           param.default_value == row.default_value && param.scale == row.scale &&
+           param.smoothing_seconds == row.smoothing_seconds;
+}
+
+} // namespace
+
+TEST_CASE("the instrument's table is well formed", "[voice]") {
+    REQUIRE(irama::find_table_fault(irama::instrument_params) == irama::TableFault::none);
+    for (const irama::ParamDescriptor& param : irama::instrument_params) {
+        REQUIRE(!param.name.empty());
+        REQUIRE(param.automatable);
+        // A stepped parameter can be automated but not modulated, and a continuous one can be both.
+        REQUIRE(param.modulatable == (param.scale != ParamScale::stepped));
+    }
+}
+
+TEST_CASE("the instrument declares every parameter of the basic synth", "[voice]") {
+    REQUIRE(irama::instrument_params.size() == basic_synth.size());
+    for (const Row& row : basic_synth) {
+        CAPTURE(row.id);
+        REQUIRE(matches(irama::instrument_params.at(index_of(irama::ParamId{row.id})), row));
+    }
+    const auto& waveform = irama::instrument_params.at(index_of(InstrumentParam::osc1_waveform));
+    REQUIRE(waveform.labels.size() == 4);
+    REQUIRE(waveform.labels.subspan(2, 1).front() == "Saw");
+}
+
+TEST_CASE("an instrument starts with every parameter at its default", "[voice]") {
+    const irama::Instrument instrument{rate};
+    for (std::size_t index = 0; index < irama::instrument_params.size(); ++index) {
+        REQUIRE(instrument.value(index) == irama::instrument_params.at(index).default_value);
+    }
+    const irama::AdsrSettings envelope = instrument.envelope();
+    REQUIRE(envelope.attack_seconds == 0.002F);
+    REQUIRE(envelope.decay_seconds == 0.3F);
+    REQUIRE(envelope.release_seconds == 0.2F);
+    REQUIRE(envelope.attack_curve == 0.0F);
+    REQUIRE(envelope.decay_curve == 0.5F);
+    REQUIRE(envelope.release_curve == 0.5F);
+}
+
+TEST_CASE("a centred pan is 3 dB down on each side", "[voice]") {
+    irama::Instrument instrument{rate};
+    instrument.set(index_of(InstrumentParam::gain), 0.0F, false);
+    const auto rendered = render(instrument, 10);
+    for (std::size_t frame = 0; frame < 10; ++frame) {
+        REQUIRE_THAT(decibels(static_cast<double>(rendered.left_gain.at(frame))),
+                     WithinAbs(-3.0103, 1e-4));
+        REQUIRE(rendered.right_gain.at(frame) == rendered.left_gain.at(frame));
+    }
+}
+
+TEST_CASE("the pan keeps constant power from hard left to hard right", "[voice]") {
+    irama::Instrument instrument{rate};
+    const std::size_t pan = index_of(InstrumentParam::pan);
+    const double gain = std::pow(10.0, -12.0 / 20.0);
+
+    instrument.set(pan, -1.0F, false);
+    auto rendered = render(instrument, 1);
+    REQUIRE_THAT(rendered.left_gain.front(), WithinRel(gain, 1e-6));
+    REQUIRE(rendered.right_gain.front() == 0.0F);
+
+    instrument.set(pan, 1.0F, false);
+    rendered = render(instrument, 1);
+    REQUIRE(rendered.left_gain.front() == 0.0F);
+    REQUIRE_THAT(rendered.right_gain.front(), WithinRel(gain, 1e-6));
+
+    instrument.set(pan, 0.5F, false);
+    rendered = render(instrument, 1);
+    const double theta = 0.75 * std::numbers::pi / 2.0;
+    REQUIRE_THAT(rendered.left_gain.front(), WithinRel(gain * std::cos(theta), 1e-5));
+    REQUIRE_THAT(rendered.right_gain.front(), WithinRel(gain * std::sin(theta), 1e-5));
+}
+
+TEST_CASE("a smoothed gain ramps linearly in decibels over exactly 20 ms", "[voice]") {
+    irama::Instrument instrument{rate};
+    instrument.set(index_of(InstrumentParam::gain), 0.0F, true);
+    const auto rendered = render(instrument, ramp_frames + 50);
+    const double centre = std::cos(std::numbers::pi / 4.0);
+    for (std::size_t frame = 0; frame < ramp_frames; ++frame) {
+        const double db = -12.0 + (12.0 * static_cast<double>(frame + 1) / ramp_frames);
+        REQUIRE_THAT(rendered.left_gain.at(frame),
+                     WithinRel(std::pow(10.0, db / 20.0) * centre, 1e-5));
+    }
+    REQUIRE(rendered.left_gain.at(ramp_frames - 2) < rendered.left_gain.at(ramp_frames - 1));
+    for (std::size_t frame = ramp_frames; frame < rendered.left_gain.size(); ++frame) {
+        REQUIRE(rendered.left_gain.at(frame) == rendered.left_gain.at(ramp_frames - 1));
+    }
+}
+
+TEST_CASE("an instrument's value set without smoothing jumps at once", "[voice]") {
+    irama::Instrument instrument{rate};
+    const std::size_t sustain = index_of(InstrumentParam::sustain);
+    instrument.set(sustain, 25.0F, false);
+    REQUIRE(instrument.value(sustain) == 25.0F);
+    const auto rendered = render(instrument, 300);
+    REQUIRE(rendered.sustain == std::vector<float>(300, 0.25F));
+}
+
+TEST_CASE("the sustain level follows its smoothed value, as a level from 0 to 1", "[voice]") {
+    irama::Instrument instrument{rate};
+    instrument.set(index_of(InstrumentParam::sustain), 20.0F, true);
+    const auto rendered = render(instrument, ramp_frames);
+    REQUIRE_THAT(rendered.sustain.front(), WithinAbs(0.7 - (0.5 / ramp_frames), 1e-6));
+    REQUIRE_THAT(rendered.sustain.at((ramp_frames / 2) - 1), WithinAbs(0.45, 1e-6));
+    REQUIRE(rendered.sustain.back() == 0.2F);
+}
+
+TEST_CASE("a note's velocity gain is 1 - s(1 - v^2)", "[voice]") {
+    irama::Instrument instrument{rate};
+    const std::size_t sensitivity = index_of(InstrumentParam::velocity_sensitivity);
+    REQUIRE(instrument.velocity_gain(1.0F) == 1.0F);
+    REQUIRE(instrument.velocity_gain(0.5F) == 0.25F);
+    REQUIRE(instrument.velocity_gain(0.0F) == 0.0F);
+
+    instrument.set(sensitivity, 0.0F, false);
+    REQUIRE(instrument.velocity_gain(0.0F) == 1.0F);
+    REQUIRE(instrument.velocity_gain(0.3F) == 1.0F);
+
+    instrument.set(sensitivity, 50.0F, false);
+    REQUIRE_THAT(instrument.velocity_gain(0.5F), WithinAbs(0.625, 1e-7));
+    REQUIRE_THAT(instrument.velocity_gain(0.0F), WithinAbs(0.5, 1e-7));
+}
+
+TEST_CASE("the envelope's settings are the parameters' values as they are now", "[voice]") {
+    irama::Instrument instrument{rate};
+    instrument.set(index_of(InstrumentParam::attack), 0.5F, true);
+    instrument.set(index_of(InstrumentParam::decay), 1.5F, true);
+    instrument.set(index_of(InstrumentParam::release), 12.0F, true);
+    instrument.set(index_of(InstrumentParam::attack_curve), -1.0F, true);
+    instrument.set(index_of(InstrumentParam::decay_curve), 0.25F, true);
+    instrument.set(index_of(InstrumentParam::release_curve), 1.0F, true);
+    const irama::AdsrSettings envelope = instrument.envelope();
+    REQUIRE(envelope.attack_seconds == 0.5F);
+    REQUIRE(envelope.decay_seconds == 1.5F);
+    REQUIRE(envelope.release_seconds == 12.0F);
+    REQUIRE(envelope.attack_curve == -1.0F);
+    REQUIRE(envelope.decay_curve == 0.25F);
+    REQUIRE(envelope.release_curve == 1.0F);
+    REQUIRE(render(instrument, 1).sustain.front() == 0.7F);
+}

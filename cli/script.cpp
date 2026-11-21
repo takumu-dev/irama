@@ -3,6 +3,10 @@
 
 #include "script.hpp"
 
+#include <irama/engine/param/param_descriptor.hpp>
+#include <irama/engine/param/param_id.hpp>
+#include <irama/engine/voice/instrument.hpp>
+
 #include <algorithm>
 #include <array>
 #include <charconv>
@@ -91,6 +95,47 @@ template <typename T> [[nodiscard]] std::optional<T> parse_whole(std::string_vie
     return *velocity;
 }
 
+// A parameter's ID, which must be one of the instrument's.
+[[nodiscard]] std::expected<irama::ParamId, std::string> parse_param(std::string_view text) {
+    const auto id = parse_whole<std::uint32_t>(text);
+    if (!id) {
+        return std::unexpected(
+            std::format("`{}` isn't a parameter ID, a whole number from 0", text));
+    }
+    if (!irama::find_param(irama::instrument_params, irama::ParamId{*id})) {
+        return std::unexpected(std::format("unknown parameter {}", text));
+    }
+    return irama::ParamId{*id};
+}
+
+[[nodiscard]] std::expected<float, std::string> parse_value(std::string_view text) {
+    const auto value = parse_whole<float>(text);
+    if (!value || !std::isfinite(*value)) {
+        return std::unexpected(std::format("`{}` isn't a parameter value, a number", text));
+    }
+    return *value;
+}
+
+// Reads the arguments of a set-parameter into `message`, which holds its frame.
+[[nodiscard]] std::expected<ScriptMessage, std::string>
+parse_set_parameter(const std::vector<std::string_view>& words, ScriptMessage message) {
+    if (words.size() != 5) {
+        return std::unexpected("set-parameter takes a parameter ID and a value");
+    }
+    const auto param = parse_param(words.at(3));
+    if (!param) {
+        return std::unexpected(param.error());
+    }
+    const auto value = parse_value(words.at(4));
+    if (!value) {
+        return std::unexpected(value.error());
+    }
+    message.kind = ScriptMessage::Kind::set_parameter;
+    message.param = *param;
+    message.value = *value;
+    return message;
+}
+
 // Reads the words of one line that holds a command. Returns the reason it can't be read, if it
 // can't.
 [[nodiscard]] std::expected<ScriptMessage, std::string>
@@ -136,9 +181,13 @@ parse_command(const std::vector<std::string_view>& words) {
             return std::unexpected("release-all takes nothing more");
         }
         message.kind = ScriptMessage::Kind::release_all;
+    } else if (command == "set-parameter") {
+        return parse_set_parameter(words, message);
     } else {
-        return std::unexpected(std::format(
-            "unknown command `{}`, expected note-on, note-off or release-all", command));
+        return std::unexpected(
+            std::format("unknown command `{}`, expected note-on, note-off, release-all or "
+                        "set-parameter",
+                        command));
     }
     return message;
 }

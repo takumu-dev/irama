@@ -9,11 +9,15 @@
 #include <irama/engine/base/owned_array.hpp>
 #include <irama/engine/base/owned_ptr.hpp>
 #include <irama/engine/base/render_scope.hpp>
+#include <irama/engine/param/param_descriptor.hpp>
+#include <irama/engine/param/param_id.hpp>
 #include <irama/engine/source/tuning.hpp>
+#include <irama/engine/voice/instrument.hpp>
 #include <irama/engine/voice/voice.hpp>
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -26,6 +30,7 @@ namespace {
 // splits a block further at each message's frame. Nothing it writes depends on the size, so it
 // can be tuned for speed alone.
 constexpr std::size_t block_frames = 256;
+static_assert(block_frames <= irama::Instrument::max_block_frames);
 
 constexpr std::size_t channels = 2;
 
@@ -56,7 +61,7 @@ std::expected<PlayerPtr, CreateError> Player::create(const PlayerConfig& config)
 }
 
 Player::Player(Key /*key*/, std::uint32_t sample_rate)
-    : sample_rate_{static_cast<float>(sample_rate)} {}
+    : instrument_{static_cast<float>(sample_rate)} {}
 
 bool Player::note_on(std::uint64_t frame, int note, float velocity) {
     IRAMA_ASSERT(note >= lowest_note && note <= highest_note, "a note is between C-0 and B-9");
@@ -80,6 +85,18 @@ bool Player::note_off(std::uint64_t frame, int note) {
 
 bool Player::release_all(std::uint64_t frame) {
     return push(Message{.frame = frame, .kind = Message::Kind::release_all});
+}
+
+bool Player::set_parameter(std::uint64_t frame, ParamId id, float value) {
+    IRAMA_ASSERT(!std::isnan(value), "a parameter's value is a number");
+    const auto index = find_param(instrument_params, id);
+    IRAMA_ASSERT(index.has_value(), "a parameter's ID is one of the instrument's");
+    return push(Message{
+        .frame = frame,
+        .kind = Message::Kind::set_parameter,
+        .param = narrow<std::uint16_t>(*index),
+        .value = instrument_params.at(*index).constrain(value),
+    });
 }
 
 void Player::render(std::span<float> out) IRAMA_NONBLOCKING {
@@ -143,29 +160,34 @@ void Player::apply(const Message& message) IRAMA_NONBLOCKING {
         // With no voice free, the note is ignored.
         auto* const free = std::ranges::find_if_not(voices_, &Voice::active);
         if (free != voices_.end()) {
-            free->start(message.note, message.velocity, sample_rate_);
+            free->start(message.note, message.velocity, instrument_);
         }
         break;
     }
     case Message::Kind::note_off:
         for (Voice& voice : voices_) {
             if (voice.held() && voice.note() == message.note) {
-                voice.release();
+                voice.release(instrument_);
             }
         }
         break;
     case Message::Kind::release_all:
         for (Voice& voice : voices_) {
-            voice.release();
+            voice.release(instrument_);
         }
+        break;
+    case Message::Kind::set_parameter:
+        // While no voice sounds, nothing would hear a glide, so the value jumps.
+        instrument_.set(message.param, message.value, std::ranges::any_of(voices_, &Voice::active));
         break;
     }
 }
 
 void Player::render_block(std::span<float> out) IRAMA_NONBLOCKING {
     std::ranges::fill(out, 0.0F);
+    const InstrumentBlock block = instrument_.render(out.size() / channels);
     for (Voice& voice : voices_) {
-        voice.render(out, scratch_.span());
+        voice.render(out, scratch_.span(), block);
     }
 }
 

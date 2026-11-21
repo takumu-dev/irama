@@ -11,6 +11,8 @@
 #include <irama/engine/base/owned_array.hpp>
 #include <irama/engine/base/owned_ptr.hpp>
 #include <irama/engine/base/spsc_queue.hpp>
+#include <irama/engine/param/param_id.hpp>
+#include <irama/engine/voice/instrument.hpp>
 #include <irama/engine/voice/voice.hpp>
 
 #include <atomic>
@@ -50,6 +52,8 @@ struct ControlMessage {
         note_off,
         /// Releases every held voice.
         release_all,
+        /// Sets one of the instrument's parameters.
+        set_parameter,
     };
 
     /// The frame at which the message applies.
@@ -58,8 +62,12 @@ struct ControlMessage {
     Kind kind = Kind::note_on;
     /// The note of a note-on or a note-off.
     std::uint8_t note = 0;
+    /// The index of a set-parameter's parameter in the instrument's table.
+    std::uint16_t param = 0;
     /// The velocity of a note-on.
     float velocity = 0.0F;
+    /// The plain value of a set-parameter, already constrained to its parameter.
+    float value = 0.0F;
 };
 
 } // namespace detail
@@ -69,15 +77,16 @@ class Player;
 /// The single owner of a player, which frees it through the allocator it was created with.
 using PlayerPtr = OwnedPtr<Player>;
 
-/// The object a host renders: it owns the voices, and plays the control messages it is sent.
+/// The object a host renders: it owns the instrument and its voices, and plays the control messages
+/// it is sent.
 ///
 /// A player is created and destroyed on a control thread, and rendered on the audio thread, never
-/// both at once. Its control functions, `note_on()`, `note_off()` and `release_all()`, are called
-/// from one control thread, and queue a message for `render()` to apply on the audio thread, at
-/// the frame the message names. Frames are counted from the first frame the player renders, and
-/// each message applies exactly at its frame, so the output never depends on how the host splits
-/// its render calls. A frame already rendered applies at the first frame of the next render call,
-/// so a message meant to apply at once can name frame 0.
+/// both at once. Its control functions, `note_on()`, `note_off()`, `release_all()` and
+/// `set_parameter()`, are called from one control thread, and queue a message for `render()` to
+/// apply on the audio thread, at the frame the message names. Frames are counted from the first
+/// frame the player renders, and each message applies exactly at its frame, so the output never
+/// depends on how the host splits its render calls. A frame already rendered applies at the first
+/// frame of the next render call, so a message meant to apply at once can name frame 0.
 ///
 /// All its memory is allocated when it is created, and it never moves, so the pointer the audio
 /// thread holds stays valid.
@@ -104,7 +113,7 @@ class Player {
     ///         which case everything allocated has been freed.
     [[nodiscard]] static std::expected<PlayerPtr, CreateError> create(const PlayerConfig& config);
 
-    /// Makes an empty player, for `create()` alone.
+    /// Makes an empty player, with every parameter at its default, for `create()` alone.
     ///
     /// \param key Which only `create()` can make.
     /// \param sample_rate The sample rate in hertz.
@@ -145,6 +154,21 @@ class Player {
     /// \return Whether the message was queued. A full queue refuses it and changes nothing.
     [[nodiscard]] bool release_all(std::uint64_t frame);
 
+    /// Queues a set-parameter: one of the instrument's parameters takes a new value at `frame`.
+    ///
+    /// The value is constrained to the parameter here, on the control thread: clamped to its
+    /// range, and rounded to the nearest whole number if it is stepped. At its frame, a parameter
+    /// with a smoothing time glides to it over exactly that time if a voice is sounding, and jumps
+    /// to it if none is, so values given to a new player at frame 0 apply as if it had been created
+    /// with them. A parameter with no smoothing time switches at its frame. Call it on the control
+    /// thread, as `note_on()`.
+    ///
+    /// \param frame The frame at which the parameter takes the value.
+    /// \param id The ID of one of the parameters in `instrument_params`, which is checked.
+    /// \param value The plain value, any number but NaN, which is checked.
+    /// \return Whether the message was queued. A full queue refuses it and changes nothing.
+    [[nodiscard]] bool set_parameter(std::uint64_t frame, ParamId id, float value);
+
     /// Renders the next frames, applying each queued message at its frame.
     ///
     /// Call it on the audio thread. It keeps the real-time rules, and is the render entry point
@@ -174,7 +198,8 @@ class Player {
     // Renders frames that no message falls inside, at most one block of them.
     void render_block(std::span<float> out) IRAMA_NONBLOCKING;
 
-    float sample_rate_;
+    // The live value of each of the instrument's parameters, which only the audio thread touches.
+    Instrument instrument_;
     OwnedArray<Voice> voices_;
     // Each voice's working, for one block.
     OwnedArray<float> scratch_;
