@@ -8,6 +8,7 @@
 #include <irama/engine/base/nonblocking.hpp>
 #include <irama/engine/base/owned_array.hpp>
 #include <irama/engine/base/owned_ptr.hpp>
+#include <irama/engine/base/pcg32.hpp>
 #include <irama/engine/base/render_scope.hpp>
 #include <irama/engine/param/param_descriptor.hpp>
 #include <irama/engine/param/param_id.hpp>
@@ -42,7 +43,7 @@ std::expected<PlayerPtr, CreateError> Player::create(const PlayerConfig& config)
     IRAMA_ASSERT(config.sample_rate > 0, "a sample rate is above 0 Hz");
     IRAMA_ASSERT(config.max_voices > 0 && config.max_voices <= max_voices_limit,
                  "a player has from 1 to 256 voices");
-    auto player = make_owned<Player>(config.allocator, Key{}, config.sample_rate);
+    auto player = make_owned<Player>(config.allocator, Key{}, config.sample_rate, config.seed);
     if (!player) {
         return std::unexpected(CreateError::out_of_memory);
     }
@@ -50,8 +51,8 @@ std::expected<PlayerPtr, CreateError> Player::create(const PlayerConfig& config)
     if (!voices) {
         return std::unexpected(CreateError::out_of_memory);
     }
-    // Each voice works in one block of the wave and one of its envelope's levels.
-    auto scratch = OwnedArray<float>::create(config.allocator, block_frames * channels);
+    auto scratch =
+        OwnedArray<float>::create(config.allocator, block_frames * Voice::scratch_per_frame);
     if (!scratch) {
         return std::unexpected(CreateError::out_of_memory);
     }
@@ -60,8 +61,8 @@ std::expected<PlayerPtr, CreateError> Player::create(const PlayerConfig& config)
     return std::move(*player);
 }
 
-Player::Player(Key /*key*/, std::uint32_t sample_rate)
-    : instrument_{static_cast<float>(sample_rate)} {}
+Player::Player(Key /*key*/, std::uint32_t sample_rate, std::uint64_t seed)
+    : instrument_{static_cast<float>(sample_rate)}, generator_{seed, 0} {}
 
 bool Player::note_on(std::uint64_t frame, int note, float velocity) {
     IRAMA_ASSERT(note >= lowest_note && note <= highest_note, "a note is between C-0 and B-9");
@@ -160,7 +161,7 @@ void Player::apply(const Message& message) IRAMA_NONBLOCKING {
         // With no voice free, the note is ignored.
         auto* const free = std::ranges::find_if_not(voices_, &Voice::active);
         if (free != voices_.end()) {
-            free->start(message.note, message.velocity, instrument_);
+            free->start(message.note, message.velocity, instrument_, generator_.split());
         }
         break;
     }
