@@ -33,7 +33,7 @@ void build_default_layout(ImGuiID dock_space) {
 
 } // namespace
 
-bool Workspace::draw() {
+bool Workspace::draw(StatusBar& status, const AudioEngine& engine) {
     bool keep_running = true;
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("File")) {
@@ -55,7 +55,7 @@ bool Workspace::draw() {
         }
         ImGui::EndMainMenuBar();
     }
-    draw_status_bar();
+    draw_status_bar(status);
 
     // The menu bar and the status bar have taken their space, so the layout fills what is left.
     const ImGuiID dock_space = ImGui::GetID("workspace");
@@ -65,7 +65,7 @@ bool Workspace::draw() {
     ImGui::DockSpaceOverViewport(dock_space);
 
     draw_instrument_window(instrument_open_);
-    draw_audio_window(audio_open_);
+    draw_audio_window(audio_open_, engine);
     draw_about(about_open_);
     return keep_running;
 }

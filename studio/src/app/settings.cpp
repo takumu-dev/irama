@@ -4,6 +4,7 @@
 #include "app/settings.hpp"
 
 #include "app/config_files.hpp"
+#include "input/key_map.hpp"
 
 #include <charconv>
 #include <cstddef>
@@ -63,6 +64,8 @@ void apply(Settings& settings, std::string_view key, std::string_view value) {
     } else if (key == "font_size") {
         settings.font_size =
             parse_int(value, min_font_size, max_font_size).value_or(Settings{}.font_size);
+    } else if (key == "octave") {
+        settings.octave = parse_int(value, min_octave, max_octave).value_or(Settings{}.octave);
     }
 }
 
@@ -86,9 +89,10 @@ std::string format_settings(const Settings& settings) {
     return std::format("window_width = {}\n"
                        "window_height = {}\n"
                        "window_maximised = {}\n"
-                       "font_size = {}\n",
+                       "font_size = {}\n"
+                       "octave = {}\n",
                        settings.window_width, settings.window_height, settings.window_maximized,
-                       settings.font_size);
+                       settings.font_size, settings.octave);
 }
 
 Settings read_settings(const std::filesystem::path& path) {
