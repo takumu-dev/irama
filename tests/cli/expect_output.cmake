@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Zlib
 
 # Runs PROGRAM with the arguments in ARGUMENTS, a list, and passes only if it exits 0 having written
-# exactly the line EXPECTED to standard output, or, given EXPECTED_ERROR instead, only if it exits
-# 2, refusing its command line, having written exactly the lines EXPECTED_ERROR to stderr.
+# exactly the line EXPECTED to standard output, or, given QUIET instead, only if it exits 0 having
+# written nothing, or, given EXPECTED_ERROR instead, only if it exits 2, refusing its command line,
+# having written exactly the lines EXPECTED_ERROR to stderr.
 execute_process(
     COMMAND "${PROGRAM}" ${ARGUMENTS}
     RESULT_VARIABLE result
@@ -21,6 +22,12 @@ if(DEFINED EXPECTED_ERROR)
 endif()
 if(NOT result STREQUAL "0")
     message(FATAL_ERROR "${PROGRAM} exited with ${result}:\n${error}")
+endif()
+if(QUIET)
+    if(NOT output STREQUAL "" OR NOT error STREQUAL "")
+        message(FATAL_ERROR "${PROGRAM} wrote:\n${output}${error}\nexpected it to write nothing")
+    endif()
+    return()
 endif()
 if(NOT output STREQUAL "${EXPECTED}\n")
     message(FATAL_ERROR "${PROGRAM} wrote:\n${output}\nexpected:\n${EXPECTED}\n")

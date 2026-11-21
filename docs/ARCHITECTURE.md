@@ -38,6 +38,9 @@ exceptions or RTTI.
 | `base` | Assertions, `irama::narrow`, the `IRAMA_NONBLOCKING` mark, the allocator with the owning pointer and array, the render scope with the real-time guard and the floating-point environment, and the single-producer, single-consumer queue. | nothing |
 | `capi` | The C API: `irama.h` and its implementation. | `base` |
 | `wav` | The WAV writer, which irama-cli and the tests share. | `base` |
+| `source` | The oscillators a voice plays, and the tuning that gives each note its frequency. | `base` |
+| `voice` | A voice, one sounding note, and the ADSR envelope that shapes it. | `source`, `base` |
+| `player` | `irama::Player`, the object a host renders, which owns the voices and the queue of control messages. | `voice`, `base` |
 
 `irama::engine` links every component but `capi`. Nothing links `capi`: it sits on top of the other
 components, and its only public header is `irama.h`, which is C.
@@ -112,6 +115,51 @@ nothing and never waits; it reports a full or empty queue at once. Its tests pus
 render scope, so the checks above watch them, and a stress test passes messages between two threads,
 which **ThreadSanitizer**, in `clang-tsan`, watches for races.
 
+## The player
+
+`irama::Player`, in `<irama/engine/player/player.hpp>`, is the object a host renders.
+`Player::create()` takes a `PlayerConfig`: the sample rate, which is fixed for the player's life,
+the number of voices, 32 by default and at most 256, and the allocator. It allocates the player, its
+voices and its working buffers there and then, and never again, and returns them in a `PlayerPtr`,
+the owning pointer, or `CreateError::out_of_memory`, having freed whatever it had allocated. The
+player never moves, so the pointer the audio thread holds stays valid. A player is created and
+destroyed on a control thread and rendered on the audio thread, never both at once.
+
+- **Control messages.** `note_on()`, `note_off()` and `release_all()` are called from one control
+  thread. Each checks its arguments with `IRAMA_ASSERT`, so a bad note or velocity never reaches the
+  audio thread, and queues a control message in the player's own `irama::SpscQueue` of 1,024. Each
+  returns whether the message was queued: a full queue refuses it and changes nothing. A message
+  names an absolute frame, counted from the first frame the player renders, and frames never go
+  backwards from one message to the next, which `IRAMA_DEBUG_ASSERT` checks. Notes are numbered as
+  the note column numbers them, from C-0 at 0 to B-9 at 119, and a velocity runs from 0 to 1.
+- **The render call.** `Player::render()` fills a span of interleaved stereo frames, any even
+  length, none included. It is the only libirama function that opens a render scope, and it
+  carries `IRAMA_NONBLOCKING`, as each component's per-block render function does. It renders in
+  blocks of 256 frames, counted from the player's first frame, and splits a block at the frame of
+  each message, so each message applies exactly at its frame, and the output is the same however
+  the host splits its calls. A message whose frame has already been rendered applies at the first
+  frame of the next render call. The queue has no peek, so the player keeps the one message it has
+  popped whose frame hasn't come yet, and one render call pops at most 1,024 messages. The player
+  writes what its voices sum to, unclipped.
+- **Voices.** A note-on starts the first free voice, and with none free the note is ignored. A
+  note-off releases every held voice playing its note, and a release-all every held voice. After
+  each render call, the number of voices sounding is written to an atomic, which `active_voices()`
+  reads on any thread.
+
+`irama::Voice`, in `voice`, is a sine at the note's frequency, from `irama::SineOscillator` and
+`irama::note_frequency()` in `source`, shaped by an `irama::Adsr` with the amplifier envelope's
+default settings. Its gain is −12 dB, panned to the centre with constant power, so each channel is
+a further 3 dB down, and scaled by `velocity²`. The tuning is twelve-tone equal temperament with A-4,
+note 57, at 440 Hz. The sine's phase is a `float` in [0, 1), and each sample is `std::sin` of
+`2π · phase`, computed in `float`.
+
+Each segment of the ADSR lasts exactly its time, rounded to a whole number of frames. Its `i`th
+frame, counting from 0, of `n` is at progress `p = (i + 1) / n`, and moves from the segment's start
+level to its end level as `start + (end − start) · shape(p)`, where `shape(p) = (1 − e^(−k·p)) /
+(1 − e^(−k))` with `k = 6 · curve`, or `p` for a curve of 0. So the last frame of a segment is at its
+end level exactly. A release starts from the current level, mid-attack included, and a voice is
+free again on the frame after its release ends, with no threshold.
+
 ## The WAV writer and golden tests
 
 `irama::WavWriter`, in `<irama/engine/wav/wav_writer.hpp>`, writes interleaved 32-bit float samples
@@ -124,6 +172,22 @@ internal C++ API, not of `irama.h`. Nothing in libirama reads WAV files.
 full scale, 440 Hz and one second by default, the same on both channels, at 48 kHz. It renders
 each block of frames inside a render scope, as a render call would, so the real-time checks watch
 it and it renders in a render call's floating-point environment.
+
+`irama-cli synth <file.wav> --script <file> [--seconds <seconds>] [--rate <hertz>]` plays a script
+through a player, for one second by default, at 48 kHz unless `--rate` gives 44100, 48000, 88200 or
+96000. A script has one control message on each line, at an absolute frame, with `#` beginning a
+comment:
+
+```
+at 0      note-on C-4 0.8   # a note as the note column writes it, and a velocity from 0 to 1
+at 24000  note-off C-4
+at 36000  release-all
+```
+
+irama-cli reads and checks the whole script before the player sees any of it, so no script can
+break one of the player's preconditions. A malformed line, a note or a velocity out of range, or a
+frame before the one on an earlier line exits with status 2, naming the line. It renders 4,096
+frames at a time, queuing each message before the render that reaches its frame.
 
 A golden test runs irama-cli and compares the file it writes with a golden stored beside the test,
 `tests/golden/<case>.wav`. `cmake/golden_test.cmake` runs the case, and `irama_wav_compare`, a test

@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: 2026 takumu-dev
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "script.hpp"
 #include <irama/engine/base/narrow.hpp>
 #include <irama/engine/base/nonblocking.hpp>
 #include <irama/engine/base/render_scope.hpp>
+#include <irama/engine/player/player.hpp>
 #include <irama/engine/wav/wav_writer.hpp>
 
 #include <algorithm>
@@ -13,13 +15,18 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <fstream>
+#include <ios>
+#include <iterator>
 #include <memory>
 #include <numbers>
 #include <optional>
 #include <print>
 #include <span>
+#include <string>
 #include <string_view>
 #include <system_error>
+#include <vector>
 
 #ifdef _MSC_VER
 #include <cstdlib>
@@ -35,7 +42,8 @@ constexpr int usage_error = 2;
 
 constexpr std::string_view usage =
     "usage: irama-cli --version\n"
-    "       irama-cli tone <file.wav> [--freq <hertz>] [--seconds <seconds>]";
+    "       irama-cli tone <file.wav> [--freq <hertz>] [--seconds <seconds>]\n"
+    "       irama-cli synth <file.wav> --script <file> [--seconds <seconds>] [--rate <hertz>]";
 
 // The tone is written as the golden tests compare it: 48 kHz, stereo.
 constexpr std::uint32_t tone_rate = 48'000;
@@ -43,7 +51,13 @@ constexpr std::uint16_t tone_channels = 2;
 // Half of full scale, which is comfortable to listen to and leaves headroom on either side.
 constexpr double tone_amplitude = 0.5;
 // An hour, far beyond any test, keeps the file well inside what a WAV file can hold.
-constexpr double max_tone_seconds = 3'600.0;
+constexpr double max_seconds = 3'600.0;
+
+// The sample rates a synth can be rendered at, and the one it is rendered at unless --rate says
+// otherwise.
+constexpr std::array<std::uint32_t, 4> synth_rates{44'100, 48'000, 88'200, 96'000};
+constexpr std::uint32_t default_synth_rate = 48'000;
+constexpr std::uint16_t synth_channels = 2;
 
 struct ToneOptions {
     const char* path = nullptr;
@@ -92,10 +106,10 @@ struct ToneOptions {
             }
             options.frequency = *value;
         } else if (name == "--seconds") {
-            if (!value || *value <= 0.0 || *value > max_tone_seconds) {
+            if (!value || *value <= 0.0 || *value > max_seconds) {
                 std::println(stderr,
                              "irama-cli: --seconds takes a number of seconds above 0, up to {}",
-                             max_tone_seconds);
+                             max_seconds);
                 return std::nullopt;
             }
             options.seconds = *value;
@@ -152,6 +166,158 @@ int tone(const ToneOptions& options) {
     return 0;
 }
 
+// Reads a whole argument as a whole number of hertz.
+[[nodiscard]] std::optional<std::uint32_t> parse_rate(std::string_view text) {
+    std::uint32_t value = 0;
+    const char* const last = std::to_address(text.end());
+    const auto [end, error] = std::from_chars(std::to_address(text.begin()), last, value);
+    if (error != std::errc{} || end != last) {
+        return std::nullopt;
+    }
+    return value;
+}
+
+struct SynthOptions {
+    const char* path = nullptr;
+    const char* script = nullptr;
+    double seconds = 1.0;
+    std::uint32_t rate = default_synth_rate;
+};
+
+// Applies the option `name`, given `value` or null if the command line ends after it. Prints what
+// is wrong with it, if anything.
+[[nodiscard]] bool apply_synth_option(SynthOptions& options, std::string_view name,
+                                      const char* value) {
+    if (name == "--script" && value != nullptr) {
+        options.script = value;
+        return true;
+    }
+    if (name == "--seconds") {
+        const auto seconds = value != nullptr ? parse_number(value) : std::nullopt;
+        if (!seconds || *seconds <= 0.0 || *seconds > max_seconds) {
+            std::println(stderr, "irama-cli: --seconds takes a number of seconds above 0, up to {}",
+                         max_seconds);
+            return false;
+        }
+        options.seconds = *seconds;
+        return true;
+    }
+    if (name == "--rate") {
+        const auto rate = value != nullptr ? parse_rate(value) : std::nullopt;
+        const auto* const known = rate ? std::ranges::find(synth_rates, *rate) : synth_rates.end();
+        if (known == synth_rates.end()) {
+            std::println(stderr, "irama-cli: --rate takes 44100, 48000, 88200 or 96000");
+            return false;
+        }
+        options.rate = *known;
+        return true;
+    }
+    std::println(stderr, "{}", usage);
+    return false;
+}
+
+// Reads the arguments after `synth`: one path and the options, in any order. Prints what is wrong
+// with them, if anything.
+[[nodiscard]] std::optional<SynthOptions> parse_synth(std::span<char*> arguments) {
+    SynthOptions options;
+    while (!arguments.empty()) {
+        const char* const argument = arguments.front();
+        arguments = arguments.subspan(1);
+        const std::string_view name = argument;
+        if (!name.starts_with("--")) {
+            if (options.path != nullptr) {
+                std::println(stderr, "{}", usage);
+                return std::nullopt;
+            }
+            options.path = argument;
+            continue;
+        }
+        const char* value = nullptr;
+        if (!arguments.empty()) {
+            value = arguments.front();
+            arguments = arguments.subspan(1);
+        }
+        if (!apply_synth_option(options, name, value)) {
+            return std::nullopt;
+        }
+    }
+    if (options.path == nullptr || options.script == nullptr) {
+        std::println(stderr, "{}", usage);
+        return std::nullopt;
+    }
+    return options;
+}
+
+// Queues one checked message of a script.
+[[nodiscard]] bool send(irama::Player& player, const ScriptMessage& message) {
+    switch (message.kind) {
+    case ScriptMessage::Kind::note_on:
+        return player.note_on(message.frame, message.note, message.velocity);
+    case ScriptMessage::Kind::note_off:
+        return player.note_off(message.frame, message.note);
+    case ScriptMessage::Kind::release_all:
+        return player.release_all(message.frame);
+    }
+    return false;
+}
+
+// Plays a script through a player, for the seconds given, rounded to the nearest frame, and writes
+// what it renders. The whole script is read and checked before the player sees any of it.
+int synth(const SynthOptions& options) {
+    std::ifstream file{options.script, std::ios::binary};
+    if (!file.is_open()) {
+        std::println(stderr, "irama-cli: couldn't read {}", options.script);
+        return failure;
+    }
+    const std::string text{std::istreambuf_iterator<char>{file}, std::istreambuf_iterator<char>{}};
+    const auto messages = parse_script(text);
+    if (!messages) {
+        std::println(stderr, "irama-cli: {}:{}: {}", options.script, messages.error().line,
+                     messages.error().reason);
+        return usage_error;
+    }
+
+    auto player = irama::Player::create({.sample_rate = options.rate});
+    if (!player) {
+        std::println(stderr, "irama-cli: out of memory");
+        return failure;
+    }
+    auto writer = irama::WavWriter::create(
+        options.path, {.sample_rate = options.rate, .channels = synth_channels});
+    if (!writer) {
+        std::println(stderr, "irama-cli: couldn't open {} for writing", options.path);
+        return failure;
+    }
+
+    const auto frames = irama::narrow<std::uint64_t>(std::llround(options.seconds * options.rate));
+    constexpr std::uint64_t block_frames = 4'096;
+    std::vector<float> block(block_frames * synth_channels);
+    auto next = messages->begin();
+    bool written = true;
+    for (std::uint64_t start = 0; written && start < frames;) {
+        std::uint64_t end = std::min(start + block_frames, frames);
+        // Each message is queued before the render that reaches its frame. A full queue holds the
+        // rest until the frames before the next of them are rendered, which empties it. Only more
+        // messages at one frame than the queue holds would make the last of them a frame late.
+        for (; next != messages->end() && next->frame < end; ++next) {
+            if (!send(**player, *next)) {
+                end = std::max(next->frame, start + 1);
+                break;
+            }
+        }
+        const auto samples =
+            std::span{block}.first(irama::narrow<std::size_t>(end - start) * synth_channels);
+        (*player)->render(samples);
+        written = writer->write(samples).has_value();
+        start = end;
+    }
+    if (!written || !writer->finish()) {
+        std::println(stderr, "irama-cli: couldn't write {}", options.path);
+        return failure;
+    }
+    return 0;
+}
+
 int run(std::span<char*> arguments) {
     // The program's own name comes first.
     const auto words = arguments.empty() ? arguments : arguments.subspan(1);
@@ -162,6 +328,10 @@ int run(std::span<char*> arguments) {
     if (!words.empty() && std::string_view{words.front()} == "tone") {
         const auto options = parse_tone(words.subspan(1));
         return options ? tone(*options) : usage_error;
+    }
+    if (!words.empty() && std::string_view{words.front()} == "synth") {
+        const auto options = parse_synth(words.subspan(1));
+        return options ? synth(*options) : usage_error;
     }
     std::println(stderr, "{}", usage);
     return usage_error;
