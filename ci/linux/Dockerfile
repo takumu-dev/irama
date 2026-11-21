@@ -13,7 +13,7 @@
 FROM gcc:16.2.0-trixie@sha256:5c2f83335c97e233c80d2bc754bd5c46b2d9c32f236a765a4ac40a59f216c064
 
 LABEL org.opencontainers.image.source=https://github.com/takumu-dev/irama
-LABEL org.opencontainers.image.description="Irama's Linux CI: GCC 16, Clang 23 on libstdc++ 16, CMake 4.4 and Doxygen 1.18"
+LABEL org.opencontainers.image.description="Irama's Linux CI: GCC 16, Clang 23 on libstdc++ 16, CMake 4.4, Doxygen 1.18 and Vulkan on lavapipe"
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG CMAKE_VERSION=4.4.5
@@ -35,11 +35,17 @@ COPY apt.llvm.org.sources /etc/apt/sources.list.d/
 #   Clang 23 and its tools, with the sanitizer runtimes: clang-23 to libclang-rt-23-dev
 #   the presets' generator: ninja-build
 #   vcpkg and the CI steps: ca-certificates, curl, git, jq, pkgconf, tar, unzip, xz-utils, zip
+#   what SDL3 needs to build its Wayland and X11 video drivers, which it otherwise leaves out
+#     without failing: libegl-dev to libxkbcommon-dev
+#   the Vulkan loader and lavapipe, Mesa's Vulkan driver on the CPU, on which Studio's smoke test
+#     draws: libvulkan1, mesa-vulkan-drivers
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
         clang-23 clang-format-23 clang-tidy-23 libclang-rt-23-dev \
         ninja-build \
         ca-certificates curl git jq pkgconf tar unzip xz-utils zip \
+        libegl-dev libwayland-dev libx11-dev libxext-dev libxkbcommon-dev \
+        libvulkan1 mesa-vulkan-drivers \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl --fail --silent --show-error --location --retry 3 --output /tmp/cmake.tar.gz \
