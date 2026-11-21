@@ -65,4 +65,7 @@ CheckOptions:
   readability-identifier-naming.IgnoreMainLikeFunctions: true
   # A plain struct, its fields all public, may still have member functions such as operators.
   misc-non-private-member-variables-in-classes.IgnoreClassesWithAllMemberVariablesBeingPublic: true
+  # The standard's maps insert on a missing key, as the check's default says, and OwnedArray checks
+  # its own index where NDEBUG isn't defined.
+  cppcoreguidelines-pro-bounds-avoid-unchecked-container-access.ExcludeClasses: '::std::map;::std::unordered_map;::std::flat_map;::irama::OwnedArray'
 ...

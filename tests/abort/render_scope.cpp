@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: 2026 takumu-dev
 // SPDX-License-Identifier: Zlib
 
-// Allocates or frees memory inside or outside a render scope, as its argument names, so that a test
-// can watch how the program ends: stopped by the real-time guard or RealtimeSanitizer, or exiting 0
-// where neither is compiled in.
+// Allocates or frees memory inside or outside a render scope, with new and delete or through
+// libirama's allocation entry point, as its argument names, so that a test can watch how the
+// program ends: stopped by the real-time guard or RealtimeSanitizer, or exiting 0 where neither is
+// compiled in.
 
 #include <irama/engine/base/render_scope.hpp>
 
+#include <irama/engine/base/allocator.hpp>
 #include <irama/engine/base/narrow.hpp>
 #include <irama/engine/base/nonblocking.hpp>
 
@@ -74,6 +76,26 @@ void new_outside() {
     free_aligned();
 }
 
+// Allocates through the entry point inside the scope, and frees the block once it has ended.
+void entry_allocate_inside() {
+    const irama::Allocator allocator = irama::default_allocator();
+    void* block = nullptr;
+    render([&] { block = irama::allocate(allocator, sizeof(int), alignof(int)); });
+    irama::deallocate(allocator, block, sizeof(int), alignof(int));
+}
+
+void entry_free_inside() {
+    const irama::Allocator allocator = irama::default_allocator();
+    void* block = irama::allocate(allocator, sizeof(int), alignof(int));
+    render([&] { irama::deallocate(allocator, block, sizeof(int), alignof(int)); });
+}
+
+void entry_outside() {
+    const irama::Allocator allocator = irama::default_allocator();
+    irama::deallocate(allocator, irama::allocate(allocator, sizeof(int), alignof(int)), sizeof(int),
+                      alignof(int));
+}
+
 // A scope that ends leaves the one around it open.
 void new_after_nested() {
     render([] {
@@ -115,6 +137,9 @@ constexpr std::array cases{
     NamedCase{.name = "aligned-new-inside", .run = aligned_new_inside},
     NamedCase{.name = "aligned-delete-inside", .run = aligned_delete_inside},
     NamedCase{.name = "new-outside", .run = new_outside},
+    NamedCase{.name = "entry-allocate-inside", .run = entry_allocate_inside},
+    NamedCase{.name = "entry-free-inside", .run = entry_free_inside},
+    NamedCase{.name = "entry-outside", .run = entry_outside},
     NamedCase{.name = "new-after-nested", .run = new_after_nested},
     NamedCase{.name = "new-beside", .run = new_beside},
 };
