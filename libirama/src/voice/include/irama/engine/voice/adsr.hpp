@@ -13,7 +13,7 @@
 
 namespace irama {
 
-/// The times, levels and curves of an `Adsr`.
+/// The times and curves of an `Adsr`'s segments.
 ///
 /// Each curve control runs from −1 to +1 and bends its segment: 0 is a straight line, a positive
 /// curve starts fast and slows towards its end, like an analogue decay, and a negative one starts
@@ -23,8 +23,6 @@ struct AdsrSettings {
     float attack_seconds = 0.002F;
     /// How long the decay takes to fall from full level to the sustain level, in seconds, above 0.
     float decay_seconds = 0.3F;
-    /// The level held after the decay until the note is released, from 0 to 1.
-    float sustain = 0.7F;
     /// How long the release takes to fall to 0, in seconds, above 0.
     float release_seconds = 0.2F;
     /// The attack's curve, from −1 to +1.
@@ -44,29 +42,37 @@ struct AdsrSettings {
 /// `shape(p) = (1 − e^(−k·p)) / (1 − e^(−k))` with `k = 6 · curve`, or `shape(p) = p` for a curve
 /// of 0. So a segment's last frame is at its end level exactly.
 ///
-/// The attack rises from 0 to 1, the decay falls from 1 to the sustain level, and the sustain holds
-/// until `release()`, which falls from wherever the level is, mid-attack included, to 0. The
+/// The attack rises from 0 to 1, the decay falls from 1 towards the sustain level, and the sustain
+/// holds until `release()`, which falls from wherever the level is, mid-attack included, to 0. The
 /// envelope ends on the last frame of its release, with no threshold.
+///
+/// Each segment's time and curve are latched when it starts, from the settings given then. The
+/// sustain level is live: it is given for each frame, the decay heads for it frame by frame, and
+/// the sustain follows it.
 class Adsr {
   public:
-    /// Starts the attack from level 0, with new settings.
+    /// Starts the attack from level 0.
     ///
-    /// The settings are kept until the next start, so each segment's time and curve are fixed when
-    /// it begins.
-    ///
-    /// \param settings The times, levels and curves, each within its range, which is checked.
+    /// \param settings The times and curves as they are now, each within its range, which is
+    ///                 checked. The attack latches its own.
     /// \param sample_rate The sample rate in hertz, above 0.
     void start(const AdsrSettings& settings, float sample_rate);
 
     /// Starts the release from the current level, unless the envelope is already releasing or has
     /// ended.
-    void release();
+    ///
+    /// \param settings The times and curves as they are now. The release latches its own.
+    void release(const AdsrSettings& settings);
 
     /// Writes the envelope's next levels, one for each element of `levels`, and moves on by as
     /// many. Once the envelope has ended, every level is 0.
     ///
     /// \param levels Where to write the levels, overwriting what it holds.
-    void render(std::span<float> levels) IRAMA_NONBLOCKING;
+    /// \param sustain The sustain level of each of those frames, from 0 to 1, at least as many.
+    /// \param settings The times and curves as they are now, which a decay starting during these
+    ///                 frames latches.
+    void render(std::span<float> levels, std::span<const float> sustain,
+                const AdsrSettings& settings) IRAMA_NONBLOCKING;
 
     /// \return Whether the envelope has started and not yet ended.
     [[nodiscard]] bool active() const;
@@ -77,16 +83,17 @@ class Adsr {
   private:
     enum class Stage : std::uint8_t { ended, attack, decay, sustain, release };
 
-    // Starts a segment of `stage`, lasting `seconds`, from the current level to `end`.
+    // Starts a segment of `stage`, lasting `seconds`, from the current level to `end`, which the
+    // decay ignores for the live sustain level.
     void begin(Stage stage, float seconds, float curve, float end);
 
-    AdsrSettings settings_;
     float sample_rate_ = 0.0F;
     Stage stage_ = Stage::ended;
     // The level of the last frame written.
     float level_ = 0.0F;
     // The current segment, if the stage has one: its start and end levels, its curve's `k`, its
-    // length in frames, and how many of them have been written.
+    // length in frames, and how many of them have been written. The decay's end level is the
+    // sustain level of each frame instead.
     float start_level_ = 0.0F;
     float end_level_ = 0.0F;
     float k_ = 0.0F;

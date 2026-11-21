@@ -5,6 +5,8 @@
 
 #include "counting_allocator.hpp"
 #include <irama/engine/base/render_scope.hpp>
+#include <irama/engine/param/param_descriptor.hpp>
+#include <irama/engine/voice/instrument.hpp>
 #include <irama/engine/voice/voice.hpp>
 
 #include <catch2/catch_test_macros.hpp>
@@ -12,6 +14,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <span>
 #include <utility>
 #include <vector>
@@ -50,8 +53,14 @@ constexpr std::size_t release_frames = 9'600;
     return out;
 }
 
-// Chords that overlap, with a note-off, notes sharing a frame and a release-all, to be sent to
-// players that render them in different ways.
+// A change of the gain while notes sound, and of the release before they are released.
+void send_changes(irama::Player& player) {
+    REQUIRE(player.set_parameter(9'000, irama::InstrumentParam::gain, -6.0F));
+    REQUIRE(player.set_parameter(9'500, irama::InstrumentParam::release, 0.5F));
+}
+
+// Chords that overlap, with a note-off, notes sharing a frame, parameter changes and a release-all,
+// to be sent to players that render them in different ways.
 void send_chords(irama::Player& player) {
     REQUIRE(player.note_on(0, 48, 0.8F));
     REQUIRE(player.note_on(1'000, 52, 0.7F));
@@ -59,7 +68,15 @@ void send_chords(irama::Player& player) {
     REQUIRE(player.note_off(5'000, 52));
     REQUIRE(player.note_on(7'777, 60, 1.0F));
     REQUIRE(player.note_on(7'777, 64, 0.9F));
+    send_changes(player);
     REQUIRE(player.release_all(12'000));
+}
+
+// Values other than the defaults for the gain, the pan and the sustain level.
+void send_values(irama::Player& player, std::uint64_t frame) {
+    REQUIRE(player.set_parameter(frame, irama::InstrumentParam::gain, 0.0F));
+    REQUIRE(player.set_parameter(frame, irama::InstrumentParam::pan, 0.75F));
+    REQUIRE(player.set_parameter(frame, irama::InstrumentParam::sustain, 40.0F));
 }
 
 [[nodiscard]] bool silent(std::span<const float> samples) {
@@ -155,20 +172,103 @@ TEST_CASE("a player writes what its voices sum to", "[player]") {
     const auto player = make_player();
     REQUIRE(player->note_on(0, 57, 1.0F));
     REQUIRE(player->note_on(0, 64, 0.5F));
+    REQUIRE(player->set_parameter(1'000, irama::InstrumentParam::pan, -0.5F));
     const auto out = render(*player, 2'000);
 
+    // The same voices, reading the same instrument, which glides to its new pan at frame 1000.
+    irama::Instrument instrument{static_cast<float>(rate)};
     irama::Voice first;
     irama::Voice second;
-    first.start(57, 1.0F, static_cast<float>(rate));
-    second.start(64, 0.5F, static_cast<float>(rate));
+    first.start(57, 1.0F, instrument);
+    second.start(64, 0.5F, instrument);
     std::vector<float> expected(out.size());
-    std::vector<float> scratch(out.size());
-    {
+    std::vector<float> scratch(irama::Instrument::max_block_frames * 2);
+    std::span<float> rest{expected};
+    for (std::size_t frame = 0; frame < 2'000;) {
+        if (frame == 1'000) {
+            instrument.set(irama::find_param(irama::instrument_params, irama::InstrumentParam::pan)
+                               .value_or(irama::instrument_params.size()),
+                           -0.5F, true);
+        }
+        const auto frames = std::min<std::size_t>(
+            {irama::Instrument::max_block_frames, (frame < 1'000 ? 1'000 : 2'000) - frame});
         const irama::RenderScope scope;
-        first.render(expected, scratch);
-        second.render(expected, scratch);
+        const auto block = instrument.render(frames);
+        first.render(rest.first(frames * 2), scratch, block);
+        second.render(rest.first(frames * 2), scratch, block);
+        rest = rest.subspan(frames * 2);
+        frame += frames;
     }
     REQUIRE(out == expected);
+}
+
+TEST_CASE("a player given every value by set-parameter at frame 0 renders the same as one created "
+          "with them",
+          "[player]") {
+    constexpr std::size_t frames = 24'000;
+    const auto created = make_player();
+    send_chords(*created);
+    const auto expected = render(*created, frames);
+
+    const auto replayed = make_player();
+    for (const irama::ParamDescriptor& param : irama::instrument_params) {
+        REQUIRE(replayed->set_parameter(0, param.id, param.default_value));
+    }
+    send_chords(*replayed);
+    REQUIRE(render(*replayed, frames) == expected);
+}
+
+TEST_CASE("a value set while no voice sounds jumps to it as if set at frame 0", "[player]") {
+    constexpr std::size_t frames = 12'000;
+    const auto at_start = make_player();
+    send_values(*at_start, 0);
+    REQUIRE(at_start->note_on(12'000, 57, 0.9F));
+    static_cast<void>(render(*at_start, 12'000));
+    const auto expected = render(*at_start, frames);
+
+    // A note sounds and ends before the values are set, at the frame of the next note.
+    const auto later = make_player();
+    REQUIRE(later->note_on(0, 60, 1.0F));
+    REQUIRE(later->note_off(100, 60));
+    send_values(*later, 12'000);
+    REQUIRE(later->note_on(12'000, 57, 0.9F));
+    static_cast<void>(render(*later, 12'000));
+    // The first note's release has ended.
+    REQUIRE(later->active_voices() == 0);
+    REQUIRE(render(*later, frames) == expected);
+}
+
+TEST_CASE("a value set while a voice sounds glides there", "[player]") {
+    const auto jumped = make_player();
+    REQUIRE(jumped->set_parameter(0, irama::InstrumentParam::pan, -1.0F));
+    REQUIRE(jumped->note_on(0, 57, 1.0F));
+
+    const auto glided = make_player();
+    REQUIRE(glided->note_on(0, 57, 1.0F));
+    REQUIRE(glided->set_parameter(0, irama::InstrumentParam::pan, -1.0F));
+
+    // The glide takes 20 ms, 960 frames, to reach the pan the other player jumped to.
+    const auto jumped_out = render(*jumped, 2'000);
+    const auto glided_out = render(*glided, 2'000);
+    constexpr std::size_t arrived = std::size_t{959} * 2;
+    REQUIRE(glided_out.at(arrived - 1) != 0.0F);
+    REQUIRE(std::ranges::equal(std::span{glided_out}.subspan(arrived),
+                               std::span{jumped_out}.subspan(arrived)));
+    REQUIRE(jumped_out.at(arrived + 1) == 0.0F);
+}
+
+TEST_CASE("a set-parameter clamps its value to the parameter's range", "[player]") {
+    const auto clamped = make_player();
+    REQUIRE(clamped->set_parameter(0, irama::InstrumentParam::gain, 100.0F));
+    REQUIRE(clamped->set_parameter(0, irama::InstrumentParam::sustain,
+                                   -std::numeric_limits<float>::infinity()));
+    send_chords(*clamped);
+
+    const auto bounds = make_player();
+    REQUIRE(bounds->set_parameter(0, irama::InstrumentParam::gain, 12.0F));
+    REQUIRE(bounds->set_parameter(0, irama::InstrumentParam::sustain, 0.0F));
+    send_chords(*bounds);
+    REQUIRE(render(*clamped, 20'000) == render(*bounds, 20'000));
 }
 
 TEST_CASE("a player counts the voices sounding at the end of each render call", "[player]") {

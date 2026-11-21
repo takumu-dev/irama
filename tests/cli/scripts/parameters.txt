@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2026 takumu-dev
+# SPDX-License-Identifier: Zlib
+
+# A chord whose sound changes as it plays: set before it starts, the values apply at once, and set
+# while it sounds, they glide or apply as each parameter says.
+at 0      set-parameter 3000 0.05    # a slower attack
+at 0      set-parameter 3002 50      # a lower sustain
+at 0      note-on C-4 0.8
+at 0      note-on G-4 0.8
+at 12000  set-parameter 2001 -1      # pan hard left
+at 18000  set-parameter 2000 100     # clamped to +12 dB
+at 18000  set-parameter 2001 1       # pan hard right
+at 24000  set-parameter 3003 0.5     # a longer release
+at 24000  release-all

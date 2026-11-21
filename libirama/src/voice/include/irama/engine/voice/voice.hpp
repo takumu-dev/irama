@@ -9,6 +9,7 @@
 #include <irama/engine/base/nonblocking.hpp>
 #include <irama/engine/source/sine_oscillator.hpp>
 #include <irama/engine/voice/adsr.hpp>
+#include <irama/engine/voice/instrument.hpp>
 
 #include <span>
 
@@ -16,21 +17,25 @@ namespace irama {
 
 /// One note, sounding from its note-on until its release ends.
 ///
-/// A voice is a sine at the note's frequency, shaped by an `Adsr` with the amplifier envelope's
-/// default settings, at a gain of −12 dB, panned to the centre with constant power, so each channel
-/// is 3 dB below that, and scaled by the velocity's gain, `velocity²`. A voice is free until it
-/// starts, and free again on the frame after its release ends.
+/// A voice is a sine at the note's frequency, shaped by an `Adsr`, through the amplifier: the
+/// instrument's gain and pan on each channel, and the gain of the note's velocity. It reads the
+/// instrument's values as they are when it needs them: the velocity's gain and the attack's
+/// settings when it starts, each later segment's settings when that segment starts, and the sustain
+/// level and the amplifier's gains every frame. A voice is free until it starts, and free again on
+/// the frame after its release ends.
 class Voice {
   public:
     /// Starts the voice playing a note, from the start of its attack.
     ///
     /// \param note The note, from `lowest_note` to `highest_note`, which is checked.
     /// \param velocity How hard the note is played, from 0 to 1.
-    /// \param sample_rate The sample rate in hertz, above 0.
-    void start(int note, float velocity, float sample_rate);
+    /// \param instrument The instrument, as it is at the note's frame.
+    void start(int note, float velocity, const Instrument& instrument);
 
     /// Starts the voice's release, unless it is already releasing or free.
-    void release();
+    ///
+    /// \param instrument The instrument, as it is at the release's frame.
+    void release(const Instrument& instrument);
 
     /// Adds the voice's next frames into `out`, as interleaved stereo frames, and moves on by as
     /// many. A free voice adds nothing.
@@ -38,7 +43,9 @@ class Voice {
     /// \param out The frames to add to, two samples for each, left then right.
     /// \param scratch Room for the voice's working, at least as long as `out`, whose contents are
     ///                overwritten.
-    void render(std::span<float> out, std::span<float> scratch) IRAMA_NONBLOCKING;
+    /// \param block The instrument's values for these frames, at least as many.
+    void render(std::span<float> out, std::span<float> scratch,
+                const InstrumentBlock& block) IRAMA_NONBLOCKING;
 
     /// \return Whether the voice is sounding, from its start until its release ends.
     [[nodiscard]] bool active() const;
@@ -52,8 +59,8 @@ class Voice {
   private:
     SineOscillator oscillator_;
     Adsr envelope_;
-    // The gain of each channel, from the amplifier's gain, the pan and the velocity.
-    float gain_ = 0.0F;
+    // The gain of the note's velocity.
+    float velocity_gain_ = 0.0F;
     int note_ = 0;
 };
 

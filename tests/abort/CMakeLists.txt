@@ -194,6 +194,10 @@ irama_assertion_report(bad_note player.cpp
 irama_assertion_report(bad_velocity player.cpp
     "velocity >= 0.0F && velocity <= 1.0F" "a velocity is from 0 to 1"
 )
+irama_assertion_report(unknown_parameter player.cpp
+    "index.has_value()" "a parameter's ID is one of the instrument's"
+)
+irama_assertion_report(parameter_nan player.cpp "!std::isnan(value)" "a parameter's value is a number")
 irama_assertion_report(odd_length player.cpp
     "out.size() % channels == 0" "stereo frames have two samples each"
 )
@@ -219,6 +223,16 @@ irama_add_abort_test(player "a velocity that isn't a number aborts with its repo
     PROGRAM irama_abort_player
     ARGUMENTS velocity-nan
     REPORT "${bad_velocity}"
+)
+irama_add_abort_test(player "a set-parameter with an ID the instrument hasn't aborts with its report"
+    PROGRAM irama_abort_player
+    ARGUMENTS unknown-parameter
+    REPORT "${unknown_parameter}"
+)
+irama_add_abort_test(player "a set-parameter with a value that isn't a number aborts with its report"
+    PROGRAM irama_abort_player
+    ARGUMENTS parameter-nan
+    REPORT "${parameter_nan}"
 )
 irama_add_abort_test(player "rendering half a frame aborts with its report"
     PROGRAM irama_abort_player

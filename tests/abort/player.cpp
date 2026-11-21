@@ -7,6 +7,8 @@
 #include <irama/engine/player/player.hpp>
 
 #include <irama/engine/base/narrow.hpp>
+#include <irama/engine/param/param_id.hpp>
+#include <irama/engine/voice/instrument.hpp>
 
 #include <array>
 #include <cstddef>
@@ -32,6 +34,15 @@ void velocity_nan(irama::Player& player) {
     static_cast<void>(player.note_on(0, 57, std::numeric_limits<float>::quiet_NaN()));
 }
 
+void unknown_parameter(irama::Player& player) {
+    static_cast<void>(player.set_parameter(0, irama::ParamId{4'242}, 1.0F));
+}
+
+void parameter_nan(irama::Player& player) {
+    static_cast<void>(player.set_parameter(0, irama::InstrumentParam::gain,
+                                           std::numeric_limits<float>::quiet_NaN()));
+}
+
 void frames_backwards(irama::Player& player) {
     static_cast<void>(player.note_on(100, 57, 1.0F));
     static_cast<void>(player.note_off(99, 57));
@@ -52,6 +63,8 @@ constexpr std::array cases{
     NamedCase{.name = "note-negative", .run = note_negative},
     NamedCase{.name = "velocity-too-high", .run = velocity_too_high},
     NamedCase{.name = "velocity-nan", .run = velocity_nan},
+    NamedCase{.name = "unknown-parameter", .run = unknown_parameter},
+    NamedCase{.name = "parameter-nan", .run = parameter_nan},
     NamedCase{.name = "frames-backwards", .run = frames_backwards},
     NamedCase{.name = "odd-length", .run = odd_length},
 };

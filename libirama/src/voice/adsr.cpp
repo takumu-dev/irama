@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <ranges>
 #include <span>
 
 namespace {
@@ -43,40 +44,37 @@ namespace irama {
 
 void Adsr::start(const AdsrSettings& settings, float sample_rate) {
     IRAMA_ASSERT(sample_rate > 0.0F, "a sample rate is above 0 Hz");
-    IRAMA_ASSERT(is_time(settings.attack_seconds) && is_time(settings.decay_seconds) &&
-                     is_time(settings.release_seconds),
-                 "an envelope's times are above 0 and at most an hour");
-    IRAMA_ASSERT(settings.sustain >= 0.0F && settings.sustain <= 1.0F,
-                 "a sustain level is from 0 to 1");
-    IRAMA_ASSERT(is_curve(settings.attack_curve) && is_curve(settings.decay_curve) &&
-                     is_curve(settings.release_curve),
-                 "a curve is from -1 to +1");
-    settings_ = settings;
     sample_rate_ = sample_rate;
     level_ = 0.0F;
-    begin(Stage::attack, settings_.attack_seconds, settings_.attack_curve, 1.0F);
+    begin(Stage::attack, settings.attack_seconds, settings.attack_curve, 1.0F);
 }
 
-void Adsr::release() {
+void Adsr::release(const AdsrSettings& settings) {
     if (stage_ == Stage::ended || stage_ == Stage::release) {
         return;
     }
-    begin(Stage::release, settings_.release_seconds, settings_.release_curve, 0.0F);
+    begin(Stage::release, settings.release_seconds, settings.release_curve, 0.0F);
 }
 
-void Adsr::render(std::span<float> levels) IRAMA_NONBLOCKING {
-    for (float& level : levels) {
+void Adsr::render(std::span<float> levels, std::span<const float> sustain,
+                  const AdsrSettings& settings) IRAMA_NONBLOCKING {
+    IRAMA_ASSERT(sustain.size() >= levels.size(), "an envelope has a sustain level for each frame");
+    for (const auto [level, sustain_level] : std::views::zip(levels, sustain)) {
+        if (stage_ == Stage::sustain) {
+            level_ = sustain_level;
+        }
         if (stage_ == Stage::ended || stage_ == Stage::sustain) {
             level = level_;
             continue;
         }
+        // The decay heads for the sustain level as it is at each frame.
+        const float end = stage_ == Stage::decay ? sustain_level : end_level_;
         ++position_;
         if (position_ == length_) {
             // A segment ends at its end level exactly, whatever the rounding of its shape.
-            level_ = end_level_;
+            level_ = end;
             if (stage_ == Stage::attack) {
-                begin(Stage::decay, settings_.decay_seconds, settings_.decay_curve,
-                      settings_.sustain);
+                begin(Stage::decay, settings.decay_seconds, settings.decay_curve, 0.0F);
             } else if (stage_ == Stage::decay) {
                 stage_ = Stage::sustain;
             } else {
@@ -84,7 +82,7 @@ void Adsr::render(std::span<float> levels) IRAMA_NONBLOCKING {
             }
         } else {
             const float p = static_cast<float>(position_) / static_cast<float>(length_);
-            level_ = start_level_ + ((end_level_ - start_level_) * shape(p, k_));
+            level_ = start_level_ + ((end - start_level_) * shape(p, k_));
         }
         level = level_;
     }
@@ -95,6 +93,8 @@ bool Adsr::active() const { return stage_ != Stage::ended; }
 bool Adsr::releasing() const { return stage_ == Stage::release; }
 
 void Adsr::begin(Stage stage, float seconds, float curve, float end) {
+    IRAMA_ASSERT(is_time(seconds), "an envelope's times are above 0 and at most an hour");
+    IRAMA_ASSERT(is_curve(curve), "a curve is from -1 to +1");
     stage_ = stage;
     start_level_ = level_;
     end_level_ = end;

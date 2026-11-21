@@ -38,9 +38,10 @@ exceptions or RTTI.
 | `base` | Assertions, `irama::narrow`, the `IRAMA_NONBLOCKING` mark, the allocator with the owning pointer and array, the render scope with the real-time guard and the floating-point environment, and the single-producer, single-consumer queue. | nothing |
 | `capi` | The C API: `irama.h` and its implementation. | `base` |
 | `wav` | The WAV writer, which irama-cli and the tests share. | `base` |
+| `param` | Parameters: the descriptor that says what each one is, its scale conversions, and the smoother that glides it to each new value. | `base` |
 | `source` | The oscillators a voice plays, and the tuning that gives each note its frequency. | `base` |
-| `voice` | A voice, one sounding note, and the ADSR envelope that shapes it. | `source`, `base` |
-| `player` | `irama::Player`, the object a host renders, which owns the voices and the queue of control messages. | `voice`, `base` |
+| `voice` | A voice, one sounding note, the ADSR envelope that shapes it, and the instrument: its parameter table, and the values every voice reads from it. | `source`, `param`, `base` |
+| `player` | `irama::Player`, the object a host renders, which owns the instrument, the voices and the queue of control messages. | `voice`, `param`, `base` |
 
 `irama::engine` links every component but `capi`. Nothing links `capi`: it sits on top of the other
 components, and its only public header is `irama.h`, which is C.
@@ -125,9 +126,9 @@ the owning pointer, or `CreateError::out_of_memory`, having freed whatever it ha
 player never moves, so the pointer the audio thread holds stays valid. A player is created and
 destroyed on a control thread and rendered on the audio thread, never both at once.
 
-- **Control messages.** `note_on()`, `note_off()` and `release_all()` are called from one control
-  thread. Each checks its arguments with `IRAMA_ASSERT`, so a bad note or velocity never reaches the
-  audio thread, and queues a control message in the player's own `irama::SpscQueue` of 1,024. Each
+- **Control messages.** `note_on()`, `note_off()`, `release_all()` and `set_parameter()` are
+  called from one control thread. Each checks its arguments with `IRAMA_ASSERT`, so a bad note,
+  velocity or parameter never reaches the audio thread, and queues a control message in the player's own `irama::SpscQueue` of 1,024. Each
   returns whether the message was queued: a full queue refuses it and changes nothing. A message
   names an absolute frame, counted from the first frame the player renders, and frames never go
   backwards from one message to the next, which `IRAMA_DEBUG_ASSERT` checks. Notes are numbered as
@@ -145,20 +146,75 @@ destroyed on a control thread and rendered on the audio thread, never both at on
   note-off releases every held voice playing its note, and a release-all every held voice. After
   each render call, the number of voices sounding is written to an atomic, which `active_voices()`
   reads on any thread.
+- **Parameters.** The player owns one `irama::Instrument`, the live value of each of the
+  instrument's parameters, filled with their defaults when it is created. `set_parameter()` takes
+  a parameter's ID and a plain value. On the control thread it finds the parameter's index in
+  `irama::instrument_params`, asserts that the ID is one of them and that the value isn't NaN, and
+  constrains the value, clamping it to the range and rounding a stepped value to the nearest whole
+  number, so a slider's 1.0001 is never an error. At its frame the value goes to the parameter's
+  smoother: a parameter with a smoothing time glides to it if any voice is sounding, and jumps to it
+  if none is. So a new player given its values by `set_parameter()` at frame 0 renders as if it had
+  been created with them, which is how a host replaces a player and keeps its values.
 
-`irama::Voice`, in `voice`, is a sine at the note's frequency, from `irama::SineOscillator` and
-`irama::note_frequency()` in `source`, shaped by an `irama::Adsr` with the amplifier envelope's
-default settings. Its gain is −12 dB, panned to the centre with constant power, so each channel is
-a further 3 dB down, and scaled by `velocity²`. The tuning is twelve-tone equal temperament with A-4,
-note 57, at 440 Hz. The sine's phase is a `float` in [0, 1), and each sample is `std::sin` of
+### Parameters
+
+The `param` component describes parameters, and knows nothing of any instrument. An
+`irama::ParamDescriptor` gives a parameter's `irama::ParamId`, a strong type over `std::uint32_t`;
+its name, unit and display precision; its `min`, `max` and default; its scale, linear, logarithmic
+or stepped; a label for each step, where a stepped parameter has them; its smoothing time; and
+whether it is automatable and modulatable. An instrument's descriptors are a `constexpr`
+`std::array` with static storage, and every ID is written out in it. `irama::find_param()` finds a
+parameter's index by its ID, and `irama::find_table_fault()` checks a table: unique IDs, a minimum
+below its maximum, a default within the range, a logarithmic minimum above 0, whole-number bounds and
+defaults for stepped parameters, one label for each step where there are labels, and no smoothing
+time below 0 or on a stepped parameter. A test runs it on every table.
+
+Values are **plain**, in the parameter's own unit, percentages from 0 to 100 among them, everywhere
+but at the edges. `to_normalized()` and `from_normalized()` map them to and from 0–1 for a slider:
+`(v − min) / (max − min)` for a linear or stepped parameter, and `log(v / min) / log(max / min)` for
+a logarithmic one.
+
+`irama::ParamSmoother` holds one parameter's live value. A smoothed set starts a linear ramp in the
+normalised domain, so a cutoff glides evenly in octaves, lasting exactly the smoothing time in whole
+frames. Its `i`th frame of `n` is at progress `(i + 1) / n`, so its last frame is at the new value
+exactly, and a test can say when it arrives. A new value during a ramp starts a full ramp from the
+current value. A parameter with no smoothing time, every stepped one among them, switches at its
+frame. The smoother writes a block's values without moving on, and moves on separately, so the
+instrument can render several parameters for one block.
+
+### The instrument and its voices
+
+`voice` declares the instrument's table, `irama::instrument_params`, and the IDs in
+`irama::InstrumentParam`. IDs fall in decimal blocks: the filter at 1000, the amplifier at 2000,
+the amplifier's envelope at 3000, and the subtractive source at 10000, whose oscillator `n` starts at
+`10000 + 10 · (n − 1)` and whose noise is at 10090. The table holds every parameter of the basic
+synth. The voice reads the amplifier's and the envelope's, and the oscillator's, the noise's and
+the filter's are held and smoothed like the rest. Continuous parameters heard while a note sounds glide over 20 ms. Stepped parameters, and those read
+only when a note or a segment starts, such as the envelope's times and curves and the velocity
+sensitivity, switch at their frame.
+
+`irama::Instrument` holds a smoother for each parameter, at the same index as in the table, and
+advances them every frame, whether a voice reads them or not, so there is one ramp for each
+parameter, shared by every voice. For each block it computes what every voice reads, once: the
+sustain level of each frame, and the gain of each frame on each channel. The gain is in decibels,
+and the pan is constant-power, `sin(π/2 − θ)` on the left and `sin θ` on the right, with θ from 0 at
+−1 to π/2 at +1, so a centred voice is 3 dB down on each side, the same on both to the bit.
+
+`irama::Voice` is a sine at the note's frequency, from `irama::SineOscillator` and
+`irama::note_frequency()` in `source`, shaped by an `irama::Adsr`, through the amplifier. It reads
+the instrument as it is when it needs a value: the velocity's gain, `1 − s · (1 − v²)` for the
+sensitivity `s`, when it starts; each segment's time and curve when that segment starts; and the
+sustain level and the channels' gains every frame. The tuning is twelve-tone equal temperament with
+A-4, note 57, at 440 Hz. The sine's phase is a `float` in [0, 1), and each sample is `std::sin` of
 `2π · phase`, computed in `float`.
 
 Each segment of the ADSR lasts exactly its time, rounded to a whole number of frames. Its `i`th
 frame, counting from 0, of `n` is at progress `p = (i + 1) / n`, and moves from the segment's start
 level to its end level as `start + (end − start) · shape(p)`, where `shape(p) = (1 − e^(−k·p)) /
 (1 − e^(−k))` with `k = 6 · curve`, or `p` for a curve of 0. So the last frame of a segment is at its
-end level exactly. A release starts from the current level, mid-attack included, and a voice is
-free again on the frame after its release ends, with no threshold.
+end level exactly. The decay heads for the sustain level as it is at each frame, and the sustain
+follows it. A release starts from the current level, mid-attack included, and a voice is free again
+on the frame after its release ends, with no threshold.
 
 ## The WAV writer and golden tests
 
@@ -179,14 +235,17 @@ through a player, for one second by default, at 48 kHz unless `--rate` gives 441
 comment:
 
 ```
-at 0      note-on C-4 0.8   # a note as the note column writes it, and a velocity from 0 to 1
+at 0      note-on C-4 0.8          # a note as the note column writes it, and a velocity from 0 to 1
+at 12000  set-parameter 2001 -0.5  # a parameter's ID, and its plain value
 at 24000  note-off C-4
 at 36000  release-all
 ```
 
 irama-cli reads and checks the whole script before the player sees any of it, so no script can
-break one of the player's preconditions. A malformed line, a note or a velocity out of range, or a
-frame before the one on an earlier line exits with status 2, naming the line. It renders 4,096
+break one of the player's preconditions. A malformed line, a note or a velocity out of range, a
+parameter ID the instrument doesn't have, a parameter value that isn't a finite number, or a frame
+before the one on an earlier line exits with status 2, naming the line. A parameter value out of
+its range is clamped by the player, as any host's would be. It renders 4,096
 frames at a time, queuing each message before the render that reaches its frame.
 
 A golden test runs irama-cli and compares the file it writes with a golden stored beside the test,
