@@ -10,6 +10,9 @@ add_library(irama::engine ALIAS irama_engine)
 add_subdirectory(src/base)
 add_subdirectory(src/capi)
 add_subdirectory(src/wav)
+add_subdirectory(src/source)
+add_subdirectory(src/voice)
+add_subdirectory(src/player)
 
 # The imported targets that libirama may link: those of its own dependencies, at the top level of
 # vcpkg.json, and nothing else. It has none. Once the whole project is configured, any other link

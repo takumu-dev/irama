@@ -1,0 +1,4 @@
+# SPDX-FileCopyrightText: 2026 takumu-dev
+# SPDX-License-Identifier: Zlib
+
+at 0 note-on C-10 0.8

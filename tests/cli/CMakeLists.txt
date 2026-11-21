@@ -4,16 +4,19 @@
 # irama-cli as a user runs it, checked through its output.
 
 # Adds a test that runs irama-cli with ARGUMENTS and passes only if it exits 0 having written
-# exactly the line EXPECTED, or, given EXPECTED_ERROR instead, only if it refuses its command line,
-# having written exactly the lines EXPECTED_ERROR to stderr.
+# exactly the line EXPECTED, or, given QUIET instead, only if it exits 0 having written nothing, or,
+# given EXPECTED_ERROR instead, only if it refuses its command line, having written exactly the
+# lines EXPECTED_ERROR to stderr.
 function(irama_add_cli_test name)
-    cmake_parse_arguments(PARSE_ARGV 1 arg "" "EXPECTED;EXPECTED_ERROR" "ARGUMENTS")
+    cmake_parse_arguments(PARSE_ARGV 1 arg "QUIET" "EXPECTED;EXPECTED_ERROR" "ARGUMENTS")
     set(test_name "cli: ${name}")
     # Each separator written as a generator expression, so that add_test() keeps the list as one
     # argument, and the script gets it with plain separators.
     string(REPLACE ";" "$<SEMICOLON>" arguments "${arg_ARGUMENTS}")
     if(DEFINED arg_EXPECTED_ERROR)
         set(expected "-DEXPECTED_ERROR=${arg_EXPECTED_ERROR}")
+    elseif(arg_QUIET)
+        set(expected "-DQUIET=ON")
     else()
         set(expected "-DEXPECTED=${arg_EXPECTED}")
     endif()
@@ -32,7 +35,11 @@ irama_add_cli_test("--version prints the release version"
     EXPECTED "irama-cli ${PROJECT_VERSION}"
 )
 
-set(usage "usage: irama-cli --version\n       irama-cli tone <file.wav> [--freq <hertz>] [--seconds <seconds>]")
+string(CONCAT usage
+    "usage: irama-cli --version\n"
+    "       irama-cli tone <file.wav> [--freq <hertz>] [--seconds <seconds>]\n"
+    "       irama-cli synth <file.wav> --script <file> [--seconds <seconds>] [--rate <hertz>]"
+)
 irama_add_cli_test("tone without a file prints the usage"
     ARGUMENTS tone
     EXPECTED_ERROR "${usage}"
@@ -60,4 +67,58 @@ irama_add_cli_test("tone refuses a length of no seconds"
 irama_add_cli_test("tone refuses --seconds without a number"
     ARGUMENTS tone out.wav --seconds
     EXPECTED_ERROR "irama-cli: --seconds takes a number of seconds above 0, up to 3600"
+)
+
+# irama-cli synth plays a script through a player. Each refusal names the script's line.
+set(scripts "${CMAKE_CURRENT_SOURCE_DIR}/scripts")
+irama_add_cli_test("synth plays a chord script"
+    ARGUMENTS synth "${CMAKE_CURRENT_BINARY_DIR}/chord.wav" --script "${scripts}/chord.txt"
+    QUIET
+)
+foreach(rate IN ITEMS 44100 48000 88200 96000)
+    irama_add_cli_test("synth renders at ${rate} Hz"
+        ARGUMENTS synth "${CMAKE_CURRENT_BINARY_DIR}/chord-${rate}.wav" --script "${scripts}/chord.txt"
+            --seconds 0.1 --rate ${rate}
+        QUIET
+    )
+endforeach()
+foreach(rate IN ITEMS 22050 192000 48000.0 fast)
+    irama_add_cli_test("synth refuses a rate of ${rate}"
+        ARGUMENTS synth out.wav --script "${scripts}/chord.txt" --rate ${rate}
+        EXPECTED_ERROR "irama-cli: --rate takes 44100, 48000, 88200 or 96000"
+    )
+endforeach()
+irama_add_cli_test("synth without a script prints the usage"
+    ARGUMENTS synth out.wav
+    EXPECTED_ERROR "${usage}"
+)
+irama_add_cli_test("synth refuses a length of no seconds"
+    ARGUMENTS synth out.wav --script "${scripts}/chord.txt" --seconds 0
+    EXPECTED_ERROR "irama-cli: --seconds takes a number of seconds above 0, up to 3600"
+)
+
+# Adds a test that synth refuses the script `name` in scripts/, naming LINE and REASON.
+function(irama_add_script_test description name line reason)
+    irama_add_cli_test("synth refuses ${description}"
+        ARGUMENTS synth out.wav --script "${scripts}/${name}.txt"
+        EXPECTED_ERROR "irama-cli: ${scripts}/${name}.txt:${line}: ${reason}"
+    )
+endfunction()
+
+irama_add_script_test("a malformed line" malformed 5 "expected `at <frame> <command>`")
+irama_add_script_test("a word after a command" extra-word 4 "note-on takes a note and a velocity")
+irama_add_script_test("a command it doesn't know" unknown-command 4
+    "unknown command `set-parameter`, expected note-on, note-off or release-all"
+)
+irama_add_script_test("a note out of range" note-out-of-range 4
+    "note C-10 is out of range, C-0 to B-9"
+)
+irama_add_script_test("a note the note column doesn't write" not-a-note 4
+    "`E#4` isn't a note, such as C-4 or F#3"
+)
+irama_add_script_test("a velocity out of range" velocity-out-of-range 5
+    "velocity 1.5 is out of range, 0 to 1"
+)
+irama_add_script_test("a frame out of order" frame-out-of-order 5
+    "frame 99 is before frame 100 on an earlier line"
 )

@@ -181,3 +181,60 @@ irama_add_abort_test(base "new while another thread renders is allowed"
     PROGRAM irama_abort_render_scope
     ARGUMENTS new-beside
 )
+
+# The checks of irama/engine/player/player.hpp, which stop a bad value on the control thread, or a
+# bad buffer at the render call.
+add_executable(irama_abort_player player.cpp)
+target_link_libraries(irama_abort_player PRIVATE irama::player)
+irama_target_conventions(irama_abort_player)
+
+irama_assertion_report(bad_note player.cpp
+    "note >= lowest_note && note <= highest_note" "a note is between C-0 and B-9"
+)
+irama_assertion_report(bad_velocity player.cpp
+    "velocity >= 0.0F && velocity <= 1.0F" "a velocity is from 0 to 1"
+)
+irama_assertion_report(odd_length player.cpp
+    "out.size() % channels == 0" "stereo frames have two samples each"
+)
+irama_assertion_report(backwards player.cpp
+    "message.frame >= last_queued_frame_" "control messages are sent in the order of their frames"
+)
+irama_add_abort_test(player "a note-on above B-9 aborts with its report"
+    PROGRAM irama_abort_player
+    ARGUMENTS note-too-high
+    REPORT "${bad_note}"
+)
+irama_add_abort_test(player "a note-off below C-0 aborts with its report"
+    PROGRAM irama_abort_player
+    ARGUMENTS note-negative
+    REPORT "${bad_note}"
+)
+irama_add_abort_test(player "a velocity above 1 aborts with its report"
+    PROGRAM irama_abort_player
+    ARGUMENTS velocity-too-high
+    REPORT "${bad_velocity}"
+)
+irama_add_abort_test(player "a velocity that isn't a number aborts with its report"
+    PROGRAM irama_abort_player
+    ARGUMENTS velocity-nan
+    REPORT "${bad_velocity}"
+)
+irama_add_abort_test(player "rendering half a frame aborts with its report"
+    PROGRAM irama_abort_player
+    ARGUMENTS odd-length
+    REPORT "${odd_length}"
+)
+# The order of frames is an IRAMA_DEBUG_ASSERT, compiled out of libirama's release builds.
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    irama_add_abort_test(player "a frame before the last goes unchecked where NDEBUG is defined"
+        PROGRAM irama_abort_player
+        ARGUMENTS frames-backwards
+    )
+else()
+    irama_add_abort_test(player "a frame before the last aborts with its report"
+        PROGRAM irama_abort_player
+        ARGUMENTS frames-backwards
+        REPORT "${backwards}"
+    )
+endif()

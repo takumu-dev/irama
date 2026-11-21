@@ -37,7 +37,11 @@ class CountingAllocator {
     }
 
     // Makes the next allocation return null, as if there were no memory.
-    void fail_next() { fail_next_ = true; }
+    void fail_next() { fail_in_ = 1; }
+
+    // Makes the allocation `count` from now, counting the next as 1, return null, and lets the
+    // others through.
+    void fail_at(std::size_t count) { fail_in_ = count; }
 
     // How many blocks have been allocated, and how many freed.
     [[nodiscard]] std::size_t allocations() const { return allocations_; }
@@ -57,9 +61,11 @@ class CountingAllocator {
   private:
     static void* allocate(void* user, std::size_t size, std::size_t alignment) {
         auto& self = *static_cast<CountingAllocator*>(user);
-        if (self.fail_next_) {
-            self.fail_next_ = false;
-            return nullptr;
+        if (self.fail_in_ != 0) {
+            --self.fail_in_;
+            if (self.fail_in_ == 0) {
+                return nullptr;
+            }
         }
         const Allocator runtime = default_allocator();
         void* pointer = runtime.allocate(runtime.user, size, alignment);
@@ -89,7 +95,8 @@ class CountingAllocator {
     std::size_t allocations_ = 0;
     std::size_t frees_ = 0;
     std::size_t mismatched_frees_ = 0;
-    bool fail_next_ = false;
+    // How many allocations from now the failing one is, or 0 for none.
+    std::size_t fail_in_ = 0;
 };
 
 } // namespace irama::test
