@@ -86,6 +86,31 @@ irama_add_abort_test(base "narrowing a negative value to an unsigned type aborts
     REPORT "${narrowed}"
 )
 
+irama_assertion_report(no_bytes allocator.cpp "size != 0" "an allocation has at least one byte")
+irama_assertion_report(no_alignment allocator.cpp "std::has_single_bit(alignment)"
+    "an alignment is a power of two"
+)
+irama_add_abort_test(base "allocating no bytes aborts with its report"
+    PROGRAM irama_abort_assertions_checked
+    ARGUMENTS allocate-nothing
+    REPORT "${no_bytes}"
+)
+irama_add_abort_test(base "allocating with an alignment that isn't a power of two aborts with its report"
+    PROGRAM irama_abort_assertions_checked
+    ARGUMENTS allocate-misaligned
+    REPORT "${no_alignment}"
+)
+irama_add_abort_test(base "freeing no bytes aborts with its report"
+    PROGRAM irama_abort_assertions_checked
+    ARGUMENTS free-nothing
+    REPORT "${no_bytes}"
+)
+irama_add_abort_test(base "freeing with an alignment that isn't a power of two aborts with its report"
+    PROGRAM irama_abort_assertions_checked
+    ARGUMENTS free-misaligned
+    REPORT "${no_alignment}"
+)
+
 # The checks of irama/engine/base/render_scope.hpp, made by the real-time guard where it is compiled
 # in, and by RealtimeSanitizer in its place where that is on.
 find_package(Threads REQUIRED)
@@ -136,10 +161,21 @@ irama_add_render_scope_test(aligned-new-inside "aligned new inside a render scop
 )
 irama_add_render_scope_test(aligned-delete-inside "aligned delete inside a render scope" freed free)
 irama_add_render_scope_test(new-after-nested "new after a nested render scope ends" allocated malloc)
+# The default allocator calls aligned_alloc and free.
+irama_add_render_scope_test(entry-allocate-inside
+    "allocating through the entry point inside a render scope" allocated aligned_alloc
+)
+irama_add_render_scope_test(entry-free-inside "freeing through the entry point inside a render scope"
+    freed free
+)
 
 irama_add_abort_test(base "new and aligned new outside any render scope are allowed"
     PROGRAM irama_abort_render_scope
     ARGUMENTS new-outside
+)
+irama_add_abort_test(base "allocating and freeing through the entry point outside any render scope is allowed"
+    PROGRAM irama_abort_render_scope
+    ARGUMENTS entry-outside
 )
 irama_add_abort_test(base "new while another thread renders is allowed"
     PROGRAM irama_abort_render_scope

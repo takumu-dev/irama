@@ -31,7 +31,7 @@ exceptions or RTTI.
 
 | Component | What it holds | Links |
 |---|---|---|
-| `base` | Assertions, `irama::narrow`, the `IRAMA_NONBLOCKING` mark, the render scope with the real-time guard, and the single-producer, single-consumer queue. | nothing |
+| `base` | Assertions, `irama::narrow`, the `IRAMA_NONBLOCKING` mark, the allocator with the owning pointer and array, the render scope with the real-time guard and the floating-point environment, and the single-producer, single-consumer queue. | nothing |
 | `capi` | The C API: `irama.h` and its implementation. | `base` |
 | `wav` | The WAV writer, which irama-cli and the tests share. | `base` |
 
@@ -44,6 +44,32 @@ Once the whole project is configured, `irama_check_link_closure()` checks what e
 `vcpkg.json`. Any other link stops the configuration, naming it. The list is fixed, rather than
 taken from each component's `PACKAGES`, so that no component can admit a package by declaring it.
 
+## Memory
+
+libirama gets memory only through its allocation entry point, `irama::allocate()` and
+`irama::deallocate()` in `<irama/engine/base/allocator.hpp>`. Each takes an `irama::Allocator`: two
+callbacks and a pointer of the host's own, so a host can hand libirama an arena or a pool. `free`
+is given back the size and alignment the block was allocated with, so an allocator needs no header
+of its own, and there is no reallocation, since libirama never grows what it has allocated. A null
+block means the allocator has no memory, which reaches the caller as
+`irama::AllocationError::out_of_memory`. A size of zero, or an alignment that isn't a power of two,
+is a broken precondition, checked with `IRAMA_ASSERT`.
+
+There is no process-wide allocator. Each object that allocates is given one when it is made, and
+keeps it to free what it allocated, so two objects can draw on different allocators.
+`irama::default_allocator()` draws on the C runtime: `std::aligned_alloc` and `std::free`, or
+`_aligned_malloc` and `_aligned_free` on Windows, rounding each size up to a whole number of
+alignments.
+
+Memory is owned by one of two types, which free through the allocator they came from, with the size
+and alignment they allocated with:
+
+- `irama::OwnedPtr<T>`, from `irama::make_owned<T>()` in `<irama/engine/base/owned_ptr.hpp>`, is a
+  `std::unique_ptr` whose deleter holds the allocator.
+- `irama::OwnedArray<T>`, from `irama::OwnedArray<T>::create()` in
+  `<irama/engine/base/owned_array.hpp>`, is an array whose length is fixed when it is made. It
+  stands in for a standard container, which could grow and would draw on the default allocator.
+
 ## Real-time checks
 
 Code that a render call runs must not allocate, lock, wait or do I/O. A render entry point holds an
@@ -52,17 +78,28 @@ nest and only the rendering thread is watched. It also carries `IRAMA_NONBLOCKIN
 `[[clang::nonblocking]]` on Clang. Two checks share that boundary:
 
 - **The real-time guard**, compiled in by the CMake option `IRAMA_REALTIME_GUARD`, replaces all 20
-  forms of the global `operator new` and `operator delete`. Inside a render scope they write one
-  line to stderr and abort; elsewhere they allocate with `malloc`, or `_aligned_malloc` on Windows
-  for the aligned forms. The operators sit in `libirama/src/base/render_scope.cpp`, beside the
+  forms of the global `operator new` and `operator delete`, and watches libirama's allocation entry
+  point. Inside a render scope any of them writes one line to stderr and aborts; elsewhere the
+  operators allocate with `malloc`, or `_aligned_malloc` on Windows for the aligned forms, and the
+  entry point calls its allocator. The operators sit in `libirama/src/base/render_scope.cpp`, beside the
   scope's constructor, so any program that opens a scope links them. The option is on in the three
   `*-debug` presets and `tidy`, and off by default, so a game's build keeps its own allocator.
 - **RealtimeSanitizer**, in `clang-rtsan`, stops the program at the first allocation, lock, system
   call or other unsafe call inside any `IRAMA_NONBLOCKING` function.
 
-The programs under `tests/abort/` prove both: `new` or `delete` inside a render scope ends with the
-guard's report where it is compiled in, with RealtimeSanitizer's under `clang-rtsan`, and goes
-unchecked elsewhere, while `new` outside a scope, or on a thread that isn't rendering, is allowed.
+The programs under `tests/abort/` prove both: `new` or `delete` inside a render scope, or allocating
+or freeing through the entry point, ends with the guard's report where it is compiled in, with
+RealtimeSanitizer's under `clang-rtsan`, and goes unchecked elsewhere, while the same outside a
+scope, or `new` on a thread that isn't rendering, is allowed.
+
+A render scope also gives every render call one floating-point environment. On x86-64, in every
+build, opening a scope saves the thread's MXCSR and sets flush-to-zero and denormals-are-zero, and
+closing it puts the saved value back, so scopes nest and the host gets its own environment back. A
+render call therefore computes the same, denormals read and written as zero, whatever the host has
+set, in irama-cli, in a host's audio callback and in a component's tests alike. The scope's
+constructor and destructor stay out of line in `render_scope.cpp`, so no compiler moves
+floating-point work across the writes to MXCSR. On other targets a scope leaves the environment as
+it is.
 
 Threads talk to the audio thread only through `irama::SpscQueue`, in
 `<irama/engine/base/spsc_queue.hpp>`: a fixed ring of trivially copyable messages from one producer
@@ -82,7 +119,7 @@ internal C++ API, not of `irama.h`. Nothing in libirama reads WAV files.
 `irama-cli tone <file.wav> [--freq <hertz>] [--seconds <seconds>]` writes a sine wave at half of
 full scale, 440 Hz and one second by default, the same on both channels, at 48 kHz. It renders
 each block of frames inside a render scope, as a render call would, so the real-time checks watch
-it.
+it and it renders in a render call's floating-point environment.
 
 A golden test runs irama-cli and compares the file it writes with a golden stored beside the test,
 `tests/golden/<case>.wav`. `cmake/golden_test.cmake` runs the case, and `irama_wav_compare`, a test

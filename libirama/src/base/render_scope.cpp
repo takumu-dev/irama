@@ -3,6 +3,13 @@
 
 #include <irama/engine/base/render_scope.hpp>
 
+#include "realtime_guard.hpp"
+
+#if defined(__x86_64__) || defined(_M_X64)
+#define IRAMA_MXCSR
+#include <xmmintrin.h>
+#endif
+
 #ifdef IRAMA_REALTIME_GUARD
 #include "realtime_sanitizer.hpp"
 
@@ -27,18 +34,40 @@ thread_local std::size_t open_scopes = 0;
 } // namespace
 #endif
 
+#ifdef IRAMA_MXCSR
+namespace {
+
+// The bits of MXCSR that flush a denormal result to zero, and read a denormal operand as zero.
+constexpr unsigned int flush_to_zero = 1U << 15U;
+constexpr unsigned int denormals_are_zero = 1U << 6U;
+
+} // namespace
+#endif
+
 namespace irama {
 
 // These stay out of the header, so that a program that renders links this file, and with it the
 // real-time guard's operators below: a linker takes an object from a static library only for a
 // symbol still undefined, and the C++ runtime, or a sanitizer's, already defines operator new.
-RenderScope::RenderScope() {
+// Out of line, they are opaque calls too, so no compiler moves floating-point work across the
+// writes to MXCSR.
+RenderScope::RenderScope()
+#ifdef IRAMA_MXCSR
+    : saved_control_{_mm_getcsr()}
+#endif
+{
 #ifdef IRAMA_REALTIME_GUARD
     ++open_scopes;
+#endif
+#ifdef IRAMA_MXCSR
+    _mm_setcsr(saved_control_ | flush_to_zero | denormals_are_zero);
 #endif
 }
 
 RenderScope::~RenderScope() {
+#ifdef IRAMA_MXCSR
+    _mm_setcsr(saved_control_);
+#endif
 #ifdef IRAMA_REALTIME_GUARD
     --open_scopes;
 #endif
@@ -132,6 +161,22 @@ void release(void* memory, std::optional<std::size_t> size,
 }
 
 } // namespace
+
+namespace irama::detail {
+
+void guard_allocation(std::size_t size) {
+    if (open_scopes != 0) {
+        stop("allocated", size);
+    }
+}
+
+void guard_free(std::size_t size) {
+    if (open_scopes != 0) {
+        stop("freed", size);
+    }
+}
+
+} // namespace irama::detail
 
 #ifdef _MSC_VER
 // MSVC's <new> annotates these operators for its code analysis, and warns about a definition that

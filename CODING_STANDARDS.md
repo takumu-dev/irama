@@ -125,8 +125,8 @@ departs from them, it says so.
   - **The real-time guard** replaces the 20 replaceable forms of the global `operator new` and
     `operator delete`. Inside a render scope on the calling thread, any of them writes one line to
     stderr, saying whether memory was allocated or freed and how much, and aborts. It works on every
-    compiler, but sees only `new` and `delete`: not `malloc` called directly, nor the C library or
-    the OS. The CMake option `IRAMA_REALTIME_GUARD`, off by default, compiles it in. The three
+    compiler, but sees only `new`, `delete` and libirama's allocation entry point: not `malloc`
+    called directly, nor the C library or the OS. The CMake option `IRAMA_REALTIME_GUARD`, off by default, compiles it in. The three
     `*-debug` presets and `tidy` turn it on. The release, sanitizer and libirama-only presets leave
     it off: replaced operators hide AddressSanitizer's `alloc-dealloc-mismatch` check and clash
     with Clang's ThreadSanitizer, and a game's build keeps its own allocator.
@@ -151,6 +151,11 @@ departs from them, it says so.
 
 - Values first, and `std::unique_ptr` for a single owner. No `std::shared_ptr` without a comment
   saying why, and no bare `new` or `delete`.
+- libirama allocates only through `irama::allocate()`, with the allocator its object was given when
+  it was made, and holds what it allocates in `irama::OwnedPtr` or `irama::OwnedArray`, never in a
+  `std::unique_ptr` with the default deleter or a standard container with the default allocator.
+  An object that can run out of memory is made by a factory function that returns
+  `AllocationError::out_of_memory`, or an error of its own, in its `std::expected`.
 - `T*` and `T&` never own.
 - Counts and container indices are `std::size_t`, departing from the Core Guidelines' ES.107.
   Signed types are for arithmetic that can go negative.
