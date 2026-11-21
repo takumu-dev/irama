@@ -364,10 +364,38 @@ call on the device, the engine and the player's control functions; the device's 
 own, which runs the callback; and the backend's threads, such as PulseAudio's, which Studio never
 touches.
 
+### The Instrument window
+
+The Instrument window shows every parameter in `irama::instrument_params`, built from the
+descriptors rather than a list of its own, so a parameter added to the table shows up without a
+change to the window. Each parameter goes under one collapsing header by the block its ID falls in:
+Oscillator for the source's blocks, from 10000, then Filter (the 1000s), Amplifier (the 2000s) and
+Envelope (the 3000s), with any ID outside them under a last header, Other.
+
+- A linear or logarithmic parameter has a slider that moves in normalised values, through the
+  descriptor's `to_normalized()` and `from_normalized()`, so a logarithmic one moves evenly in
+  octaves. A stepped parameter with labels has a combo box of them, and one without a slider over
+  whole numbers.
+- A slider shows the plain value as text, written by Studio: the number to the descriptor's
+  precision and its unit's symbol (`440 Hz`, `-12.0 dB`, `0.300 s`, `50.0%`, `+7 st`, `-5 ct`),
+  or a stepped parameter's label. Semitones and cents above 0 take a `+`, and nothing is written
+  `-0`.
+- Double-clicking a slider sets the parameter's default. Ctrl-clicking one puts a text field in its
+  place, which takes a number, with or without the unit's symbol, or a label in any case. Enter sets
+  the value, constrained to the parameter, and Escape or a click elsewhere leaves it as it was.
+
+`AudioEngine` keeps Studio's own copy of the values, by ID, which starts from the defaults at every
+run, since the values are song data rather than settings. The window always shows the copy, and
+each change sets it and sends set-parameter at frame 0 at once, so a drag sends at most once a
+frame. A value the player's queue refuses stays marked in the copy and goes again with the next
+frame's flush, at its latest value only. Every new player is given the whole copy by set-parameter
+at frame 0 before its device starts, so it holds every value at its first frame. With no device
+open, a change only updates the copy.
+
 `irama_studio_core` is laid out in folders, which are not targets of their own: `app/` (the loop,
-the window, the command line, the settings), `audio/` (the device, the engine and its meters),
-`input/` (the note keys), `ui/` (the theme, the font and helpers) and `views/` (what the window
-shows). `irama-studio` is `main.cpp` alone. Studio's tests are one Catch2 program,
+the window, the command line, the settings), `audio/` (the device, the engine, its meters and
+Studio's copy of the instrument's values), `input/` (the note keys), `ui/` (the theme, the font,
+the values' text and helpers) and `views/` (what the window shows). `irama-studio` is `main.cpp` alone. Studio's tests are one Catch2 program,
 `irama_studio_tests` in `tests/studio/`, which tests what needs no window. One of its tests checks
 that SDL was built with its `wayland`, `x11` and `offscreen` video drivers, since SDL quietly leaves
 out a driver whose development packages are missing. The play test opens the engine on miniaudio's
