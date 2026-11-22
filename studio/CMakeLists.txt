@@ -40,6 +40,7 @@ add_library(irama_studio_core STATIC
     src/app/settings.cpp
     src/audio/audio_device.cpp
     src/audio/audio_engine.cpp
+    src/audio/device_choice.cpp
     src/audio/miniaudio.cpp
     src/input/key_map.cpp
     src/input/note_keys.cpp

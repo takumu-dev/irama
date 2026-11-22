@@ -4,6 +4,8 @@
 #include "audio/audio_engine.hpp"
 
 #include "audio/audio_device.hpp"
+#include "audio/device_choice.hpp"
+#include "audio/heartbeat_watch.hpp"
 #include "input/note_message.hpp"
 #include <irama/engine/base/nonblocking.hpp>
 #include <irama/engine/base/render_scope.hpp>
@@ -15,10 +17,13 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <format>
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 namespace irama_studio {
 namespace {
@@ -44,11 +49,48 @@ AudioEngine::AudioEngine(std::span<const AudioBackend> backends) : device_(backe
 
 AudioEngine::~AudioEngine() { close(); }
 
-bool AudioEngine::open(std::uint32_t callback_frames) {
+bool AudioEngine::open(std::string_view device, std::uint32_t buffer_size) {
+    close();
+    device_setting_ = device;
+    buffer_size_ = buffer_size;
+    // The system default needs no list.
+    const std::vector<std::string> listed =
+        device.empty() ? std::vector<std::string>{} : device_.device_names();
+    return open_choice(choose_device(device, listed));
+}
+
+bool AudioEngine::reopen() { return open(device_setting_, buffer_size_); }
+
+bool AudioEngine::watch(HeartbeatWatch::Clock::time_point now) {
+    if (!is_open() || !heartbeat_watch_.lost(now, heartbeat())) {
+        return false;
+    }
+    const std::string lost = opened_device_;
+    close();
+    const std::string_view lost_name = lost.empty() ? system_default_name : std::string_view{lost};
+    const std::optional<DeviceChoice> fallback = fall_back_after_loss(lost);
+    if (!fallback) {
+        note_.clear();
+        error_ = std::format("{} lost", lost_name);
+    } else if (!open_choice(*fallback)) {
+        note_.clear();
+        error_ = std::format("{} lost. {}", lost_name, error_);
+    }
+    return true;
+}
+
+bool AudioEngine::open_choice(const DeviceChoice& choice) {
     close();
     error_.clear();
+    note_ = choice.note;
+    opened_device_ = choice.name;
+    heartbeat_watch_.reset();
     const auto callback = [this](std::span<float> out) { render(out); };
-    AudioRequest request{.sample_rate = 0, .callback_frames = callback_frames};
+    AudioRequest request{
+        .device_name = choice.name,
+        .sample_rate = 0,
+        .callback_frames = buffer_size_,
+    };
     if (!device_.open(request, callback)) {
         error_ = device_.last_error();
         return false;

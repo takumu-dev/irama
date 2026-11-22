@@ -13,6 +13,7 @@
 #include "ui/flags.hpp"
 #include "ui/fonts.hpp"
 #include "ui/theme.hpp"
+#include "views/audio_window.hpp"
 #include "views/status_bar.hpp"
 #include "views/workspace.hpp"
 #include <irama/engine/base/narrow.hpp>
@@ -52,6 +53,9 @@ constexpr const char* settings_file_name = "studio.ini";
 constexpr const char* layout_file_name = "imgui.ini";
 // What the frame is cleared to, beneath the windows, which cover all of it.
 constexpr SDL_FColor clear_color{.r = 0.06F, .g = 0.06F, .b = 0.06F, .a = 1.0F};
+// How long the loop waits for an event while the window can't be seen, so that it still looks at
+// the audio device's heartbeat.
+constexpr std::int32_t hidden_wait_ms = 250;
 
 // Runs a function as it goes out of scope, so that each step of start-up is undone, in reverse,
 // however run() returns.
@@ -236,6 +240,23 @@ void handle_key(const SDL_KeyboardEvent& key, NoteKeys& keys, AudioEngine& engin
     return keep_running;
 }
 
+// Opens the audio device again where the user picked a device or a buffer size, or pressed Reopen,
+// and closes a device that has stopped calling back. Either way the player is new, or gone, so the
+// keys held are forgotten.
+void update_audio(const AudioWindow& window, Settings& settings, SettingsFiles& files,
+                  NoteKeys& keys, AudioEngine& engine, DelayedFile::Clock::time_point now) {
+    if (window.wants_open()) {
+        settings.audio_device = window.chosen_device.value_or(settings.audio_device);
+        settings.buffer_size = window.chosen_buffer_size.value_or(settings.buffer_size);
+        files.change_settings(settings, now);
+        keys.forget();
+        static_cast<void>(engine.open(settings.audio_device, settings.buffer_size));
+    }
+    if (engine.watch(now)) {
+        keys.forget();
+    }
+}
+
 // Draws ImGui's frame into the window's next swapchain texture, which waits for vsync. A window
 // with no area, such as one minimised, has nothing drawn.
 void render(SDL_GPUDevice* device, SDL_Window* window) {
@@ -347,10 +368,9 @@ int run(const Options& options) {
         ImGui_ImplSDLGPU3_Shutdown();
     }};
 
-    // Studio plays through the system default device. With none, it runs silent, and the Audio
-    // window says why.
+    // With no device, Studio runs silent, and the Audio window says why.
     AudioEngine engine{studio_backends};
-    static_cast<void>(engine.open());
+    static_cast<void>(engine.open(settings.audio_device, settings.buffer_size));
     NoteKeys keys{settings.octave};
     MeterDisplay meters;
 
@@ -359,10 +379,11 @@ int run(const Options& options) {
     std::uint64_t frames = 0;
     bool running = true;
     while (running) {
-        // A window that can't be seen draws nothing until something happens to it.
+        // A window that can't be seen draws nothing until something happens to it, or the wait
+        // runs out.
         const SDL_WindowFlags hidden = SDL_WINDOW_MINIMIZED | SDL_WINDOW_HIDDEN;
         if ((SDL_GetWindowFlags(window) & hidden) != 0) {
-            SDL_WaitEvent(nullptr);
+            SDL_WaitEventTimeout(nullptr, hidden_wait_ms);
         }
         if (!handle_events(window, font_size, settings, files, keys, engine)) {
             running = false;
@@ -386,6 +407,7 @@ int run(const Options& options) {
         render(device, window);
 
         const DelayedFile::Clock::time_point now = DelayedFile::Clock::now();
+        update_audio(workspace.audio_window(), settings, files, keys, engine, now);
         keys.set_octave(keys.octave() + status.octave_step);
         if (keys.octave() != settings.octave) {
             settings.octave = keys.octave();
