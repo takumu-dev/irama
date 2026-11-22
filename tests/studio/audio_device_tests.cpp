@@ -14,7 +14,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <string>
 #include <thread>
+#include <vector>
 
 using irama_studio::AudioBackend;
 using irama_studio::AudioDevice;
@@ -126,4 +128,34 @@ TEST_CASE("with no backend the device doesn't open and says why", "[studio][audi
     CHECK_FALSE(device.last_error().empty());
     CHECK_FALSE(device.start());
     device.close();
+}
+
+TEST_CASE("the Null backend lists its device by name, and opens it by that name",
+          "[studio][audio]") {
+    AudioDevice device{null_backend};
+    const std::vector<std::string> names = device.device_names();
+    REQUIRE(names.size() == 1);
+    CHECK_FALSE(names.front().empty());
+
+    Calls calls;
+    REQUIRE(device.open(AudioRequest{.device_name = names.front(), .callback_frames = 256},
+                        counting(calls, 256)));
+    REQUIRE(device.granted());
+    CHECK(device.granted().value_or(AudioGranted{}).device_name == names.front());
+    REQUIRE(device.start());
+    CHECK(wait_for_calls(calls, 2));
+}
+
+TEST_CASE("a device name that isn't listed doesn't open, and says why", "[studio][audio]") {
+    AudioDevice device{null_backend};
+    Calls calls;
+    CHECK_FALSE(device.open(AudioRequest{.device_name = "No Such Device", .callback_frames = 256},
+                            counting(calls, 256)));
+    CHECK_FALSE(device.is_open());
+    CHECK(device.last_error().contains("No Such Device"));
+}
+
+TEST_CASE("with no backend there are no devices to list", "[studio][audio]") {
+    const AudioDevice device{std::span<const AudioBackend>{}};
+    CHECK(device.device_names().empty());
 }

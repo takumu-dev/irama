@@ -267,7 +267,8 @@ SDL_GPU, which on Linux runs on Vulkan. So running Studio on Linux needs a Vulka
 
 - **The loop.** Studio has its own `main()` and a plain loop: handle SDL's events, draw a frame, and
   present it with vsync, so it redraws every vsync while the window can be seen. While the window is
-  minimised or hidden, the loop waits for the next event instead.
+  minimised or hidden, the loop waits for the next event instead, for 250 ms at most, so that it
+  still looks at the audio device's heartbeat.
 - **Docking.** Windows dock inside the main window only, in a dock space that fills it between the
   main menu bar and the status bar. ImGui's windows of their own, outside the main window, are off:
   they work only under some of SDL's video drivers, and never on native Wayland.
@@ -294,9 +295,10 @@ SDL_GPU, which on Linux runs on Vulkan. So running Studio on Linux needs a Vulka
   - `studio.ini` holds `key = value` lines, which Studio reads and writes itself: `window_width`
     and `window_height`, the window's size when it isn't maximised, in logical pixels (at least
     640×400, the window's minimum); `window_maximised` (`true` or `false`); and `font_size`, the UI
-    font's size in logical pixels, from 10 to 24, 15 by default; and `octave`, the keyboard octave,
-    from 0 to 8, 4 by default. A key Studio doesn't know is
-    ignored, and a value it can't read, or one out of its range, leaves that setting at its default
+    font's size in logical pixels, from 10 to 24, 15 by default; `audio_device`, the audio
+    device's name, or empty for the system default; `buffer_size`, the frames in each audio
+    callback, 128, 256, 512 or 1024, 256 by default; and `octave`, the keyboard octave, from 0 to
+    8, 4 by default. A key Studio doesn't know is ignored, and a value it can't read, or one out of its range, leaves that setting at its default
     and the others as read. There is no version key. The window's position isn't kept, since
     Wayland doesn't let a client place its window.
   - `imgui.ini` holds ImGui's layout: where the windows are docked, and their sizes. ImGui hands it
@@ -317,20 +319,43 @@ Studio plays through two layers in `studio/src/audio/`:
 - **`AudioDevice`** wraps [miniaudio](https://github.com/mackron/miniaudio) and knows nothing of
   Irama. It owns one `ma_context`, started on the first backend in its list that works, and at most
   one `ma_device` on it, which plays interleaved stereo 32-bit float frames from a
-  `void(std::span<float>)` callback. Opening a device reports what it was granted: the backend, the
+  `void(std::span<float>)` callback. It lists the playback devices by name, and opens one by its
+  name, or the system default, with a null device ID, which follows the user's choice of default.
+  Opening a device reports what it was granted: the backend, the
   rate, the number of frames in each callback and the device's name, or the error that stopped it.
   The callback runs only once the device is started, so the caller can first prepare for the rate.
   Closing is always `ma_device_stop()` then `ma_device_uninit()`, since uninitialising a device that
   has lost its server otherwise waits forever. The context asks for real-time priority for the
-  device's thread, which miniaudio lowers to normal where the system refuses it. miniaudio's
+  device's thread, which miniaudio lowers to normal where the system refuses it. miniaudio's log
+  never reaches stderr: the device keeps its latest error, from any thread, for the Audio window,
+  and drops everything else, since after an ALSA device is lost, warnings come hundreds of
+  thousands of times a second. miniaudio's
   implementation compiles in Studio's own `miniaudio.cpp`, with each preset's flags, so the
   sanitizers instrument its threads too.
 - **`AudioEngine`** holds the device and, only while it is open, an `irama::Player` with 32 voices
-  at the device's rate. Studio's backends are PulseAudio, then ALSA. It opens the system default
-  device at the device's own rate, and if that isn't one of the player's, 44.1, 48, 88.2 or
-  96 kHz, opens it again at 48 kHz for the backend to convert. Each callback has exactly 256 frames,
+  at the device's rate. Studio's backends are PulseAudio, then ALSA. It opens a device at the
+  device's own rate, and if that isn't one of the player's, 44.1, 48, 88.2 or 96 kHz, opens it
+  again at 48 kHz for the backend to convert. Each callback has exactly the buffer size's frames,
   and miniaudio's own clipping is off. With no backend or device working, Studio runs silent, and
   the Audio window says why.
+
+The engine opens the device that `audio_device` names, where it is listed, and otherwise the system
+default, with a note that the named device wasn't found. The setting is kept either way, so the
+device opens again by name once it is back. Every open, whether of another device, at another
+buffer size, or by Reopen, closes the device, drops the player and creates a new one, so the held
+keys are forgotten. Listing and opening run on the UI thread, and a frame may drop while they do.
+
+No Linux backend reports a lost device: a stream on a named device is orphaned when the device is
+unplugged, while one on the system default moves to the next device. So the UI thread looks at the
+callback's heartbeat each frame, and a device whose heartbeat hasn't moved for a second is lost and
+closed. A named device then gives way to the system default, with a note that it was lost. A lost
+system default, or a fallback that fails, leaves Studio silent, with the error and a Reopen button.
+Nothing is tried again in the background.
+
+The Audio window shows the backend; a Device combo, System default and then the devices by name,
+listed again each time it opens; a Buffer size combo, in frames and in milliseconds at the
+device's rate; what the device plays at, its rate and frames a callback, or that Studio is silent;
+the latest error or note, and miniaudio's latest error; and Reopen while silent.
 
 The audio callback carries `IRAMA_NONBLOCKING` and opens its own `irama::RenderScope`, which the
 player's scope nests in, so the real-time checks watch Studio's own work in the callback as well as
@@ -394,14 +419,15 @@ open, a change only updates the copy.
 
 `irama_studio_core` is laid out in folders, which are not targets of their own: `app/` (the loop,
 the window, the command line, the settings), `audio/` (the device, the engine, its meters and
-Studio's copy of the instrument's values), `input/` (the note keys), `ui/` (the theme, the font,
-the values' text and helpers) and `views/` (what the window shows). `irama-studio` is `main.cpp` alone. Studio's tests are one Catch2 program,
-`irama_studio_tests` in `tests/studio/`, which tests what needs no window. One of its tests checks
-that SDL was built with its `wayland`, `x11` and `offscreen` video drivers, since SDL quietly leaves
-out a driver whose development packages are missing. The play test opens the engine on miniaudio's
-Null backend, a device with no hardware that a timer drives on miniaudio's own thread, plays a chord
-through the note keys and lets the real callback render it: so the real-time guard and every
-sanitizer watch Studio's callback while it plays.
+Studio's copy of the instrument's values), `input/` (the note keys), `ui/` (the theme, the font, the
+values' text and helpers) and `views/` (what the window shows). `irama-studio` is `main.cpp` alone.
+Studio's tests are one Catch2 program, `irama_studio_tests` in `tests/studio/`, which tests what
+needs no window. One of its tests checks that SDL was built with its `wayland`, `x11` and
+`offscreen` video drivers, since SDL quietly leaves out a driver whose development packages are
+missing. The play test opens the engine on miniaudio's Null backend, a device with no hardware that
+a timer drives on miniaudio's own thread, plays a chord through the note keys and lets the real
+callback render it: so the real-time guard and every sanitizer watch Studio's callback while it
+plays.
 
 `irama-studio --exit-after-frames <count>` quits after drawing that many frames. The smoke test,
 `cmake/smoke_test.cmake`, runs it for 300 frames under SDL's `offscreen` video driver, with no

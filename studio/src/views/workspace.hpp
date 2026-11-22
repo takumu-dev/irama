@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "views/audio_window.hpp"
 #include "views/instrument_window.hpp"
 
 namespace irama_studio {
@@ -21,11 +22,15 @@ class Workspace {
     ///               changes the instrument's values through.
     [[nodiscard]] bool draw(StatusBar& status, AudioEngine& engine);
 
+    /// \return The Audio window, with what the user asked of it on the latest frame.
+    [[nodiscard]] const AudioWindow& audio_window() const { return audio_window_; }
+
   private:
     InstrumentWindow instrument_;
     bool instrument_open_ = true;
     bool audio_open_ = true;
     bool about_open_ = false;
+    AudioWindow audio_window_;
 };
 
 } // namespace irama_studio

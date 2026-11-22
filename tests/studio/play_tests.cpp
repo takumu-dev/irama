@@ -18,7 +18,9 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string>
 #include <thread>
+#include <vector>
 
 using irama_studio::AudioBackend;
 using irama_studio::AudioEngine;
@@ -166,14 +168,81 @@ TEST_CASE("a parameter changed with no device open changes only the copy, and th
     CHECK(quiet > 0.0F);
     CHECK(quiet < 0.01F);
 
-    // Reopening gives the device a new player, which starts with the copy too. The new player
-    // starts silent, so the keys are pressed again.
-    engine.close();
-    REQUIRE(engine.open());
+    // A new buffer size reopens the device with a new player, which starts with the copy too. The
+    // new player starts silent, so the keys are pressed again.
+    REQUIRE(engine.open("", 512));
     NoteKeys pressed_again;
     press_chord(pressed_again, engine);
     REQUIRE(render_for(engine, 0.2));
     const float reopened = engine.take_output_peak();
     CHECK(reopened > 0.0F);
     CHECK(reopened < 0.01F);
+}
+
+TEST_CASE("a listed device opens by its name on the Null backend", "[studio][play]") {
+    AudioEngine engine{null_backend};
+    const std::vector<std::string> names = engine.device_names();
+    REQUIRE_FALSE(names.empty());
+    REQUIRE(engine.open(names.front()));
+    CHECK(engine.device_setting() == names.front());
+    CHECK(engine.note().empty());
+    REQUIRE(render_for(engine, 0.05));
+}
+
+TEST_CASE("a named device that isn't listed opens the system default, and keeps the setting",
+          "[studio][play]") {
+    AudioEngine engine{null_backend};
+    REQUIRE(engine.open("USB Headset"));
+    CHECK(engine.is_open());
+    CHECK(engine.device_setting() == "USB Headset");
+    CHECK(engine.note() == "USB Headset not found, using system default");
+    CHECK(engine.last_error().empty());
+    REQUIRE(render_for(engine, 0.05));
+
+    // Opening again with the system default leaves no note.
+    REQUIRE(engine.open(""));
+    CHECK(engine.device_setting().empty());
+    CHECK(engine.note().empty());
+}
+
+TEST_CASE("a new buffer size reopens the device with a new player, which forgets held notes",
+          "[studio][play]") {
+    AudioEngine engine{null_backend};
+    REQUIRE(engine.open("", 256));
+    NoteKeys keys;
+    press_chord(keys, engine);
+    REQUIRE(render_for(engine, 0.1));
+    REQUIRE(engine.active_voices() == 3);
+
+    REQUIRE(engine.open("", 512));
+    CHECK(engine.buffer_size() == 512);
+    REQUIRE(engine.device().granted());
+    CHECK(engine.device().granted().value_or(AudioGranted{}).callback_frames == 512);
+    REQUIRE(render_for(engine, 0.1));
+    CHECK(engine.active_voices() == 0);
+    static_cast<void>(engine.take_output_peak());
+    REQUIRE(render_for(engine, 0.05));
+    CHECK(engine.take_output_peak() == 0.0F);
+
+    // Reopening keeps the device and the buffer size it was last opened with.
+    REQUIRE(engine.reopen());
+    CHECK(engine.device().granted().value_or(AudioGranted{}).callback_frames == 512);
+}
+
+TEST_CASE("a device whose callback keeps running isn't lost", "[studio][play]") {
+    AudioEngine engine{null_backend};
+    REQUIRE(engine.open());
+    const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds{200};
+    while (std::chrono::steady_clock::now() < until) {
+        CHECK_FALSE(engine.watch(std::chrono::steady_clock::now()));
+        std::this_thread::sleep_for(std::chrono::milliseconds{10});
+    }
+    CHECK(engine.is_open());
+}
+
+TEST_CASE("with no device open there is nothing to lose", "[studio][play]") {
+    AudioEngine engine{null_backend};
+    const auto now = std::chrono::steady_clock::now();
+    CHECK_FALSE(engine.watch(now));
+    CHECK_FALSE(engine.watch(now + std::chrono::seconds{5}));
 }

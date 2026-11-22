@@ -41,6 +41,7 @@ add_library(irama_studio_core STATIC
     src/audio/audio_device.cpp
     src/audio/audio_engine.cpp
     src/audio/create_player.cpp
+    src/audio/device_choice.cpp
     src/audio/instrument_values.cpp
     src/audio/miniaudio.cpp
     src/input/key_map.cpp

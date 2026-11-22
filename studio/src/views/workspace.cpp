@@ -65,7 +65,7 @@ bool Workspace::draw(StatusBar& status, AudioEngine& engine) {
     ImGui::DockSpaceOverViewport(dock_space);
 
     instrument_.draw(instrument_open_, engine);
-    draw_audio_window(audio_open_, engine);
+    draw_audio_window(audio_open_, audio_window_, engine);
     draw_about(about_open_);
     return keep_running;
 }

@@ -4,6 +4,8 @@
 #pragma once
 
 #include "audio/audio_device.hpp"
+#include "audio/device_choice.hpp"
+#include "audio/heartbeat_watch.hpp"
 #include "audio/instrument_values.hpp"
 #include "audio/message_backlog.hpp"
 #include "input/note_message.hpp"
@@ -18,14 +20,13 @@
 #include <cstdint>
 #include <span>
 #include <string>
+#include <string_view>
+#include <vector>
 
 namespace irama_studio {
 
 /// The backends Studio plays through, in the order it tries them.
 inline constexpr std::array studio_backends{AudioBackend::pulseaudio, AudioBackend::alsa};
-
-/// The number of frames in each audio callback.
-inline constexpr std::uint32_t default_callback_frames = 256;
 
 /// The number of voices Studio's player has.
 inline constexpr std::size_t player_voices = 32;
@@ -38,6 +39,10 @@ inline constexpr std::size_t player_voices = 32;
 /// renders the player, clips its output to [−1, 1], and reports its CPU load, whether it clipped,
 /// and a heartbeat, all through atomics that the UI thread reads. Every function is called on the
 /// UI thread.
+///
+/// Every open, whether of another device, at another buffer size, or after a device is lost,
+/// closes the device, drops the player, and gives the device it opens a new player. The new player
+/// starts silent, so the caller forgets the keys it holds.
 class AudioEngine {
   public:
     /// Makes an engine with no device open, on the first of `backends` that works.
@@ -51,14 +56,32 @@ class AudioEngine {
     /// Closes the device, if one is open.
     ~AudioEngine();
 
-    /// Opens the system default device at its own rate where the player can run at it, and
-    /// otherwise at 48 kHz, which the backend converts. It closes any device open before, and gives
-    /// the new one a new player.
+    /// Opens a device at its own rate where the player can run at it, and otherwise at 48 kHz,
+    /// which the backend converts. It closes any device open before, and gives the new one a new
+    /// player. The device is chosen by `choose_device()`, so a named device that isn't listed opens
+    /// the system default in its place, and `note()` says so.
     ///
-    /// \param callback_frames The number of frames in each callback.
-    /// \return Whether the device opened. If it didn't, the engine is silent, and `last_error()`
-    ///         says why.
-    [[nodiscard]] bool open(std::uint32_t callback_frames = default_callback_frames);
+    /// \param device The `audio_device` setting: a device's name, or empty for the system default.
+    ///               It is kept, for `reopen()`, whichever device opens.
+    /// \param buffer_size The number of frames in each callback.
+    /// \return Whether a device opened. If none did, the engine is silent, and `last_error()` says
+    ///         why.
+    [[nodiscard]] bool open(std::string_view device = {},
+                            std::uint32_t buffer_size = default_buffer_size);
+
+    /// Opens again with the device setting and buffer size of the latest `open()`.
+    ///
+    /// \return Whether a device opened.
+    [[nodiscard]] bool reopen();
+
+    /// Looks at the callback's heartbeat, once a frame. A device whose heartbeat hasn't moved for
+    /// a second is lost, and closed. A named device then falls back to the system default, and
+    /// `note()` says so. A lost system default, or a fallback that fails, leaves the engine silent,
+    /// and `last_error()` says why. Nothing is tried again until the next open.
+    ///
+    /// \param now The time of the frame.
+    /// \return Whether the device was lost, and so the player replaced or dropped.
+    [[nodiscard]] bool watch(HeartbeatWatch::Clock::time_point now);
 
     /// Closes the device and drops its player, with any messages still waiting for it.
     void close();
@@ -104,7 +127,20 @@ class AudioEngine {
     /// \return The device the engine plays through.
     [[nodiscard]] const AudioDevice& device() const { return device_; }
 
-    /// \return Why the latest open failed, or nothing if it didn't.
+    /// \return The names of the devices there are now, as `open()` takes them.
+    [[nodiscard]] std::vector<std::string> device_names() const { return device_.device_names(); }
+
+    /// \return The device setting of the latest open: a device's name, or empty for the system
+    ///         default.
+    [[nodiscard]] const std::string& device_setting() const { return device_setting_; }
+
+    /// \return The buffer size of the latest open, in frames.
+    [[nodiscard]] std::uint32_t buffer_size() const { return buffer_size_; }
+
+    /// \return Why the system default opened in place of the device asked for, or nothing.
+    [[nodiscard]] const std::string& note() const { return note_; }
+
+    /// \return Why the latest open failed or the device was lost, or nothing if neither.
     [[nodiscard]] const std::string& last_error() const;
 
   private:
@@ -113,6 +149,9 @@ class AudioEngine {
 
     // The rate the open device runs at, or 0 with none open.
     [[nodiscard]] std::uint32_t granted_rate() const;
+
+    // Opens the chosen device with a new player.
+    [[nodiscard]] bool open_choice(const DeviceChoice& choice);
 
     // Puts a message in the player's queue, and returns whether the queue took it.
     [[nodiscard]] bool deliver(const NoteMessage& message);
@@ -127,6 +166,12 @@ class AudioEngine {
     float sample_rate_ = 0.0F;
     MessageBacklog backlog_;
     InstrumentValues parameters_{irama::instrument_params};
+    std::string device_setting_;
+    std::uint32_t buffer_size_ = default_buffer_size;
+    // The name of the device open, or empty for the system default.
+    std::string opened_device_;
+    HeartbeatWatch heartbeat_watch_;
+    std::string note_;
     std::string error_;
     std::atomic<float> cpu_peak_ = 0.0F;
     std::atomic<float> output_peak_ = 0.0F;
