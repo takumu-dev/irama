@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: 2026 takumu-dev
+# SPDX-License-Identifier: Zlib
+
+# One note through each of the basic source's five waveforms, a tenth of a second each, so the
+# crossfades between the oscillator's waveforms are recorded too, then released.
+at 0      set-parameter 10000 0    # sine
+at 0      note-on C-4 0.8
+at 4800   set-parameter 10000 1    # triangle
+at 9600   set-parameter 10000 2    # saw
+at 14400  set-parameter 10000 3    # pulse
+at 19200  set-parameter 10001 0    # the oscillator glides out
+at 19200  set-parameter 10090 100  # as the noise glides in
+at 24000  release-all

@@ -10,6 +10,7 @@
 #include <irama/engine/param/param_descriptor.hpp>
 #include <irama/engine/param/param_id.hpp>
 #include <irama/engine/param/param_smoother.hpp>
+#include <irama/engine/source/oscillator.hpp>
 #include <irama/engine/voice/adsr.hpp>
 
 #include <array>
@@ -194,6 +195,17 @@ inline constexpr std::array instrument_params{
 /// What every voice reads from the instrument during one block: the values it computes once for
 /// all of them.
 struct InstrumentBlock {
+    /// The oscillator's waveform, which holds for the whole block, since a stepped value changes
+    /// only at a message's frame, where the player starts a block.
+    Waveform waveform = Waveform::saw;
+    /// The oscillator's level of each frame, from 0 to 1.
+    std::span<const float> osc_level;
+    /// The pulse width of each frame, from 0.05 to 0.95 of the period.
+    std::span<const float> pulse_width;
+    /// The ratio of each frame by which the coarse and fine tuning raise a note's frequency.
+    std::span<const float> tuning;
+    /// The noise's level of each frame, from 0 to 1.
+    std::span<const float> noise_level;
     /// The envelope's times and curves, which a segment starting during the block latches.
     AdsrSettings envelope;
     /// The sustain level of each frame, from 0 to 1.
@@ -211,7 +223,7 @@ struct InstrumentBlock {
 /// advances them every frame, whether a voice reads them or not. The amplifier's gain is in
 /// decibels, and its pan is constant-power, `cos θ` on the left and `sin θ` on the right, with θ
 /// from 0 at −1 to π/2 at +1, so a centred voice is 3 dB down on each side. Both are computed every
-/// frame.
+/// frame, and so is the tuning, `tuning_ratio(coarse + fine / 100)`.
 class Instrument {
   public:
     /// The most frames `render()` computes at once.
@@ -237,6 +249,9 @@ class Instrument {
     /// \return The sample rate in hertz.
     [[nodiscard]] float sample_rate() const;
 
+    /// \return The oscillator's waveform, as it is now.
+    [[nodiscard]] Waveform waveform() const;
+
     /// \return The envelope's times and curves, as they are now.
     [[nodiscard]] AdsrSettings envelope() const;
 
@@ -256,6 +271,10 @@ class Instrument {
   private:
     float sample_rate_;
     std::array<ParamSmoother, instrument_params.size()> params_;
+    std::array<float, max_block_frames> osc_level_{};
+    std::array<float, max_block_frames> pulse_width_{};
+    std::array<float, max_block_frames> tuning_{};
+    std::array<float, max_block_frames> noise_level_{};
     std::array<float, max_block_frames> sustain_{};
     std::array<float, max_block_frames> left_gain_{};
     std::array<float, max_block_frames> right_gain_{};

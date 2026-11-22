@@ -7,6 +7,8 @@
 #include <irama/engine/base/render_scope.hpp>
 #include <irama/engine/param/param_descriptor.hpp>
 #include <irama/engine/param/param_id.hpp>
+#include <irama/engine/source/oscillator.hpp>
+#include <irama/engine/source/tuning.hpp>
 #include <irama/engine/voice/adsr.hpp>
 
 #include <catch2/catch_message.hpp>
@@ -47,7 +49,18 @@ struct Rendered {
     std::vector<float> sustain;
     std::vector<float> left_gain;
     std::vector<float> right_gain;
+    std::vector<float> osc_level;
+    std::vector<float> pulse_width;
+    std::vector<float> tuning;
+    std::vector<float> noise_level;
+    // The waveform of each block.
+    std::vector<irama::Waveform> waveform;
 };
+
+// Appends one block's values to those gathered so far.
+void append(std::vector<float>& gathered, std::span<const float> block) {
+    gathered.insert(gathered.end(), block.begin(), block.end());
+}
 
 // Renders as the player does, inside a render scope, so the real-time checks watch the instrument.
 [[nodiscard]] irama::InstrumentBlock render_block(irama::Instrument& instrument,
@@ -62,11 +75,14 @@ struct Rendered {
     for (std::size_t done = 0; done < frames; done += irama::Instrument::max_block_frames) {
         const irama::InstrumentBlock block =
             render_block(instrument, std::min(irama::Instrument::max_block_frames, frames - done));
-        rendered.sustain.insert(rendered.sustain.end(), block.sustain.begin(), block.sustain.end());
-        rendered.left_gain.insert(rendered.left_gain.end(), block.left_gain.begin(),
-                                  block.left_gain.end());
-        rendered.right_gain.insert(rendered.right_gain.end(), block.right_gain.begin(),
-                                   block.right_gain.end());
+        append(rendered.sustain, block.sustain);
+        append(rendered.left_gain, block.left_gain);
+        append(rendered.right_gain, block.right_gain);
+        append(rendered.osc_level, block.osc_level);
+        append(rendered.pulse_width, block.pulse_width);
+        append(rendered.tuning, block.tuning);
+        append(rendered.noise_level, block.noise_level);
+        rendered.waveform.push_back(block.waveform);
     }
     return rendered;
 }
@@ -273,4 +289,64 @@ TEST_CASE("the envelope's settings are the parameters' values as they are now", 
     REQUIRE(envelope.decay_curve == 0.25F);
     REQUIRE(envelope.release_curve == 1.0F);
     REQUIRE(render(instrument, 1).sustain.front() == 0.7F);
+}
+
+TEST_CASE("the instrument's source values start at their defaults", "[voice]") {
+    irama::Instrument instrument{rate};
+    REQUIRE(instrument.waveform() == irama::Waveform::saw);
+    const Rendered rendered = render(instrument, 300);
+    REQUIRE(rendered.waveform == std::vector{irama::Waveform::saw, irama::Waveform::saw});
+    REQUIRE(rendered.osc_level == std::vector<float>(300, 1.0F));
+    REQUIRE(rendered.pulse_width == std::vector<float>(300, 0.5F));
+    REQUIRE(rendered.tuning == std::vector<float>(300, 1.0F));
+    REQUIRE(rendered.noise_level == std::vector<float>(300, 0.0F));
+}
+
+TEST_CASE("the levels and the pulse width are fractions of their percentages", "[voice]") {
+    irama::Instrument instrument{rate};
+    instrument.set(index_of(InstrumentParam::osc1_level), 25.0F, false);
+    instrument.set(index_of(InstrumentParam::osc1_pulse_width), 10.0F, false);
+    instrument.set(index_of(InstrumentParam::noise_level), 80.0F, false);
+    const Rendered rendered = render(instrument, 10);
+    REQUIRE(rendered.osc_level == std::vector<float>(10, 0.25F));
+    REQUIRE(rendered.pulse_width == std::vector<float>(10, 0.1F));
+    REQUIRE(rendered.noise_level == std::vector<float>(10, 0.8F));
+}
+
+TEST_CASE("the waveform follows its stepped value", "[voice]") {
+    irama::Instrument instrument{rate};
+    for (const auto waveform :
+         {irama::Waveform::sine, irama::Waveform::triangle, irama::Waveform::pulse}) {
+        instrument.set(index_of(InstrumentParam::osc1_waveform),
+                       static_cast<float>(static_cast<int>(waveform)), false);
+        REQUIRE(instrument.waveform() == waveform);
+        REQUIRE(render(instrument, 1).waveform.front() == waveform);
+    }
+}
+
+TEST_CASE("the tuning is the ratio of the coarse semitones and the fine cents", "[voice]") {
+    irama::Instrument instrument{rate};
+    instrument.set(index_of(InstrumentParam::osc1_coarse), 7.0F, false);
+    instrument.set(index_of(InstrumentParam::osc1_fine), -50.0F, false);
+    const Rendered rendered = render(instrument, 10);
+    for (const float ratio : rendered.tuning) {
+        REQUIRE(ratio == irama::tuning_ratio(6.5F));
+    }
+}
+
+TEST_CASE("a coarse step changes the tuning at once, and a fine change glides over 20 ms",
+          "[voice]") {
+    irama::Instrument instrument{rate};
+    instrument.set(index_of(InstrumentParam::osc1_coarse), 12.0F, true);
+    instrument.set(index_of(InstrumentParam::osc1_fine), 100.0F, true);
+    const Rendered rendered = render(instrument, ramp_frames + 10);
+    // The coarse step applies from the first frame, the fine glide arrives on the ramp's last.
+    REQUIRE_THAT(rendered.tuning.front(),
+                 WithinRel(irama::tuning_ratio(12.0F + (1.0F / 960.0F)), 1e-6F));
+    for (std::size_t frame = 1; frame < ramp_frames; ++frame) {
+        REQUIRE(rendered.tuning.at(frame) > rendered.tuning.at(frame - 1));
+    }
+    for (std::size_t frame = ramp_frames - 1; frame < rendered.tuning.size(); ++frame) {
+        REQUIRE(rendered.tuning.at(frame) == irama::tuning_ratio(13.0F));
+    }
 }

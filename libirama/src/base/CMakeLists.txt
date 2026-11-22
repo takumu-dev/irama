@@ -10,6 +10,7 @@ irama_add_component(base
         include/irama/engine/base/nonblocking.hpp
         include/irama/engine/base/owned_array.hpp
         include/irama/engine/base/owned_ptr.hpp
+        include/irama/engine/base/pcg32.hpp
         include/irama/engine/base/render_scope.hpp
         include/irama/engine/base/spsc_queue.hpp
     SOURCES
