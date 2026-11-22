@@ -10,6 +10,7 @@
 #include <irama/engine/base/nonblocking.hpp>
 #include <irama/engine/base/owned_array.hpp>
 #include <irama/engine/base/owned_ptr.hpp>
+#include <irama/engine/base/pcg32.hpp>
 #include <irama/engine/base/spsc_queue.hpp>
 #include <irama/engine/param/param_id.hpp>
 #include <irama/engine/voice/instrument.hpp>
@@ -30,6 +31,10 @@ struct PlayerConfig {
     std::uint32_t sample_rate = 48'000;
     /// How many voices can sound at once, from 1 to `Player::max_voices_limit`.
     std::size_t max_voices = 32;
+    /// The seed of the player's random numbers. The player keeps one `Pcg32`, of this seed on
+    /// stream 0, and each note-on splits the new voice's noise generator from it, so voices' noise
+    /// is uncorrelated, and the output depends only on the seed and the control messages.
+    std::uint64_t seed = 0x6972'616d'6131;
     /// The allocator the player draws all its memory from, and frees it to.
     Allocator allocator = default_allocator();
 };
@@ -108,7 +113,7 @@ class Player {
     /// Call it on a control thread. A sample rate of 0, or a voice count of 0 or above
     /// `max_voices_limit`, breaks a precondition, which is checked.
     ///
-    /// \param config The sample rate, the voice count and the allocator.
+    /// \param config The sample rate, the voice count, the seed and the allocator.
     /// \return The player, or `CreateError::out_of_memory` when the allocator has no memory, in
     ///         which case everything allocated has been freed.
     [[nodiscard]] static std::expected<PlayerPtr, CreateError> create(const PlayerConfig& config);
@@ -117,7 +122,8 @@ class Player {
     ///
     /// \param key Which only `create()` can make.
     /// \param sample_rate The sample rate in hertz.
-    Player(Key key, std::uint32_t sample_rate);
+    /// \param seed The seed of its random numbers.
+    Player(Key key, std::uint32_t sample_rate, std::uint64_t seed);
 
     Player(const Player&) = delete;
     Player& operator=(const Player&) = delete;
@@ -201,6 +207,8 @@ class Player {
     // The live value of each of the instrument's parameters, which only the audio thread touches.
     Instrument instrument_;
     OwnedArray<Voice> voices_;
+    // The generator each note-on splits its voice's noise generator from.
+    Pcg32 generator_;
     // Each voice's working, for one block.
     OwnedArray<float> scratch_;
     SpscQueue<Message, queue_capacity> queue_;

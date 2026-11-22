@@ -21,3 +21,11 @@ TEST_CASE("notes are tuned in equal temperament from A-4", "[source]") {
     REQUIRE_THAT(irama::note_frequency(irama::lowest_note), WithinRel(16.351598F, 1e-6F));
     REQUIRE_THAT(irama::note_frequency(irama::highest_note), WithinRel(15804.266F, 1e-6F));
 }
+
+TEST_CASE("a tuning ratio is 2 to the power of its semitones over 12", "[source]") {
+    REQUIRE(irama::tuning_ratio(0.0F) == 1.0F);
+    REQUIRE(irama::tuning_ratio(12.0F) == 2.0F);
+    REQUIRE(irama::tuning_ratio(-24.0F) == 0.25F);
+    REQUIRE_THAT(irama::tuning_ratio(7.0F), WithinRel(1.4983071F, 1e-6F));
+    REQUIRE_THAT(irama::tuning_ratio(-0.5F), WithinRel(0.9715319F, 1e-6F));
+}

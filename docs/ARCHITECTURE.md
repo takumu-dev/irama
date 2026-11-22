@@ -35,11 +35,11 @@ exceptions or RTTI.
 
 | Component | What it holds | Links |
 |---|---|---|
-| `base` | Assertions, `irama::narrow`, the `IRAMA_NONBLOCKING` mark, the allocator with the owning pointer and array, the render scope with the real-time guard and the floating-point environment, and the single-producer, single-consumer queue. | nothing |
+| `base` | Assertions, `irama::narrow`, the `IRAMA_NONBLOCKING` mark, the allocator with the owning pointer and array, the render scope with the real-time guard and the floating-point environment, the single-producer, single-consumer queue, and the PCG32 random number generator. | nothing |
 | `capi` | The C API: `irama.h` and its implementation. | `base` |
 | `wav` | The WAV writer, which irama-cli and the tests share. | `base` |
 | `param` | Parameters: the descriptor that says what each one is, its scale conversions, and the smoother that glides it to each new value. | `base` |
-| `source` | The oscillators a voice plays, and the tuning that gives each note its frequency. | `base` |
+| `source` | The basic source a voice plays, the band-limited oscillator and the noise, and the tuning that gives each note its frequency. | `base` |
 | `voice` | A voice, one sounding note, the ADSR envelope that shapes it, and the instrument: its parameter table, and the values every voice reads from it. | `source`, `param`, `base` |
 | `player` | `irama::Player`, the object a host renders, which owns the instrument, the voices and the queue of control messages. | `voice`, `param`, `base` |
 
@@ -120,7 +120,8 @@ which **ThreadSanitizer**, in `clang-tsan`, watches for races.
 
 `irama::Player`, in `<irama/engine/player/player.hpp>`, is the object a host renders.
 `Player::create()` takes a `PlayerConfig`: the sample rate, which is fixed for the player's life,
-the number of voices, 32 by default and at most 256, and the allocator. It allocates the player, its
+the number of voices, 32 by default and at most 256, the seed of its random numbers, and the
+allocator. It allocates the player, its
 voices and its working buffers there and then, and never again, and returns them in a `PlayerPtr`,
 the owning pointer, or `CreateError::out_of_memory`, having freed whatever it had allocated. The
 player never moves, so the pointer the audio thread holds stays valid. A player is created and
@@ -143,7 +144,11 @@ destroyed on a control thread and rendered on the audio thread, never both at on
   popped whose frame hasn't come yet, and one render call pops at most 1,024 messages. The player
   writes what its voices sum to, unclipped.
 - **Voices.** A note-on starts the first free voice, and with none free the note is ignored. A
-  note-off releases every held voice playing its note, and a release-all every held voice. After
+  note-off releases every held voice playing its note, and a release-all every held voice. The
+  player keeps one `irama::Pcg32`, of the config's seed on stream 0, a fixed number by default,
+  and each note-on splits the new voice's noise generator from it: a seed and a stream drawn from
+  its next four outputs. So voices' noise is uncorrelated, and the output depends only on the seed
+  and the control messages. After
   each render call, the number of voices sounding is written to an atomic, which `active_voices()`
   reads on any thread.
 - **Parameters.** The player owns one `irama::Instrument`, the live value of each of the
@@ -188,25 +193,45 @@ instrument can render several parameters for one block.
 `irama::InstrumentParam`. IDs fall in decimal blocks: the filter at 1000, the amplifier at 2000,
 the amplifier's envelope at 3000, and the subtractive source at 10000, whose oscillator `n` starts at
 `10000 + 10 · (n − 1)` and whose noise is at 10090. The table holds every parameter of the basic
-synth. The voice reads the amplifier's and the envelope's, and the oscillator's, the noise's and
-the filter's are held and smoothed like the rest. Continuous parameters heard while a note sounds glide over 20 ms. Stepped parameters, and those read
+synth. The voice reads the source's, the amplifier's and the envelope's, and the filter's are held
+and smoothed like the rest. Continuous parameters heard while a note sounds glide over 20 ms. Stepped parameters, and those read
 only when a note or a segment starts, such as the envelope's times and curves and the velocity
 sensitivity, switch at their frame.
 
 `irama::Instrument` holds a smoother for each parameter, at the same index as in the table, and
 advances them every frame, whether a voice reads them or not, so there is one ramp for each
 parameter, shared by every voice. For each block it computes what every voice reads, once: the
-sustain level of each frame, and the gain of each frame on each channel. The gain is in decibels,
+sustain level of each frame, the gain of each frame on each channel, and the source's values: the
+waveform, which holds for the block, and the oscillator's level, the pulse width, the noise's level
+and the tuning of each frame, the ratio `2^((coarse + fine / 100) / 12)`. The gain is in decibels,
 and the pan is constant-power, `sin(π/2 − θ)` on the left and `sin θ` on the right, with θ from 0 at
 −1 to π/2 at +1, so a centred voice is 3 dB down on each side, the same on both to the bit.
 
-`irama::Voice` is a sine at the note's frequency, from `irama::SineOscillator` and
-`irama::note_frequency()` in `source`, shaped by an `irama::Adsr`, through the amplifier. It reads
-the instrument as it is when it needs a value: the velocity's gain, `1 − s · (1 − v²)` for the
-sensitivity `s`, when it starts; each segment's time and curve when that segment starts; and the
-sustain level and the channels' gains every frame. The tuning is twelve-tone equal temperament with
-A-4, note 57, at 440 Hz. The sine's phase is a `float` in [0, 1), and each sample is `std::sin` of
-`2π · phase`, computed in `float`.
+`irama::Voice` plays the basic source, shaped by an `irama::Adsr`, through the amplifier: an
+`irama::Oscillator` at the note's frequency from `irama::note_frequency()` times the tuning, at the
+oscillator's level, plus `irama::Noise` at the noise's level. It reads the instrument as it is when
+it needs a value: the velocity's gain, `1 − s · (1 − v²)` for the sensitivity `s`, and the
+waveform when it starts; each segment's time and curve when that segment starts; and the source's
+values, the sustain level and the channels' gains every frame. The tuning is twelve-tone equal
+temperament with A-4, note 57, at 440 Hz. A change of waveform while a voice sounds crossfades
+linearly over 5 ms, rounded to whole frames: the voice copies its oscillator, plays the old waveform
+on the copy and the new one on its own, from the same phase, and frame `i` of `n` is `(i + 1) / n`
+of the new one. A change during a crossfade starts a new one from the waveform fading in. A coarse
+step is a jump in pitch with a continuous phase, and doesn't crossfade.
+
+The oscillator plays a sine, a triangle, a saw or a pulse from one `float` phase in [0, 1), which
+moves on by the frequency over the sample rate each sample. Each waveform's fundamental is in phase
+with the sine's. The saw and the pulse correct each jump with 2-point PolyBLEP, and the triangle
+corrects each corner with 2-point polyBLAMP, so it needs no integrator and has no DC offset. The
+pulse width runs from 5 % to 95 % and is latched at each phase wrap, so it never changes inside a
+period. A frequency above 0.45 of the sample rate is held there. 2-point PolyBLEP is alias-free by
+the perceptual measure to about 2 kHz: it all but removes the aliases that fold down from near the
+sample rate, but weakens those just below half the sample rate by only about 8 dB. The oscillator's
+test measures the strongest component up to 8 kHz that isn't a harmonic, relative to the
+fundamental, for the saw, the pulse at 50 % and 10 % and the triangle at 110, 440 and 1,760 Hz,
+with a 65,536-point seven-term Blackman-Harris-windowed FFT. Each limit is the first measurement
+plus 3 dB, and is at least 20 dB below the naive waveform's at the same note. The noise is uniform,
+each sample the top 24 bits of its generator's next output, scaled to [−1, 1).
 
 Each segment of the ADSR lasts exactly its time, rounded to a whole number of frames. Its `i`th
 frame, counting from 0, of `n` is at progress `p = (i + 1) / n`, and moves from the segment's start
@@ -258,6 +283,17 @@ presets under the real-time guard, and the sanitizer presets under their checks.
 most 512 KiB, about 1.3 seconds, unless its case allows more. Only the `gcc-release` build writes
 goldens, so that they don't drift between compilers. The checks under `tests/golden/harness/` run
 the script and the compare tool on goldens wrong in each way, and show that each one fails.
+
+The synth's goldens play scripts from `tests/golden/scripts/` through `irama-cli synth`, at the
+player's default seed. `synth-waveforms` plays one note through the sine, the triangle, the saw and
+the pulse, a tenth of a second each, so it records the crossfades between them, then the noise
+alone, and the release.
+
+`irama_test_support`, in `tests/support/`, is what the tests measure audio with: a radix-2 FFT in
+double precision, checked against a direct DFT, the seven-term Blackman-Harris window, and the
+strongest component of a periodic signal that isn't one of its harmonics, up to a frequency. It
+links only the standard library, so a component's test program can link it and still link no other
+part of libirama.
 
 ## Irama Studio
 
@@ -507,7 +543,7 @@ The tests check that all of these agree.
 | `cmake/smoke_test.cmake` | Starts Studio headless and checks that it quits cleanly. |
 | `cmake/embed_file.cmake` | Writes a file's bytes into a C++ source, for Studio's font. |
 | `studio/` | Irama Studio: `irama_studio_core`, `irama-studio`, and the `.clang-tidy` that lets ImGui's printf-style functions through. |
-| `tests/` | The tests, one folder per component under `unit/`, the programs that must abort under `abort/`, the golden cases and the compare tool under `golden/`, Studio's tests under `studio/`, and the CLI and configuration checks. |
+| `tests/` | The tests, one folder per component under `unit/`, the programs that must abort under `abort/`, the golden cases and the compare tool under `golden/`, Studio's tests under `studio/`, `irama_test_support` under `support/`, and the CLI and configuration checks. |
 | `ci/` | The CI's Linux image, under `linux/`, the Windows job's scripts, under `windows/`, and the scripts the Linux jobs share. |
 | `THIRD_PARTY_NOTICES.md` | The notices of the libraries the applications ship. |
 | `REUSE.toml`, `LICENSES/` | The licences of files that can't hold a comment, and their texts. |
