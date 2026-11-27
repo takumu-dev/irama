@@ -5,5 +5,6 @@ irama_add_tests(voice
     SOURCES
         adsr_tests.cpp
         instrument_tests.cpp
+        voice_allocation_tests.cpp
         voice_tests.cpp
 )

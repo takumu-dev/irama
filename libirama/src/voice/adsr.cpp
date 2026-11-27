@@ -92,6 +92,8 @@ bool Adsr::active() const { return stage_ != Stage::ended; }
 
 bool Adsr::releasing() const { return stage_ == Stage::release; }
 
+float Adsr::level() const { return level_; }
+
 void Adsr::begin(Stage stage, float seconds, float curve, float end) {
     IRAMA_ASSERT(is_time(seconds), "an envelope's times are above 0 and at most an hour");
     IRAMA_ASSERT(is_curve(curve), "a curve is from -1 to +1");

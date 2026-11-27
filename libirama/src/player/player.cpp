@@ -15,6 +15,7 @@
 #include <irama/engine/source/tuning.hpp>
 #include <irama/engine/voice/instrument.hpp>
 #include <irama/engine/voice/voice.hpp>
+#include <irama/engine/voice/voice_allocation.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -51,12 +52,17 @@ std::expected<PlayerPtr, CreateError> Player::create(const PlayerConfig& config)
     if (!voices) {
         return std::unexpected(CreateError::out_of_memory);
     }
+    auto fades = OwnedArray<Voice>::create(config.allocator, fade_slots);
+    if (!fades) {
+        return std::unexpected(CreateError::out_of_memory);
+    }
     auto scratch =
         OwnedArray<float>::create(config.allocator, block_frames * Voice::scratch_per_frame);
     if (!scratch) {
         return std::unexpected(CreateError::out_of_memory);
     }
     (*player)->voices_ = std::move(*voices);
+    (*player)->fades_ = std::move(*fades);
     (*player)->scratch_ = std::move(*scratch);
     return std::move(*player);
 }
@@ -158,11 +164,15 @@ void Player::apply_due_messages(std::size_t& popped) IRAMA_NONBLOCKING {
 void Player::apply(const Message& message) IRAMA_NONBLOCKING {
     switch (message.kind) {
     case Message::Kind::note_on: {
-        // With no voice free, the note is ignored.
-        auto* const free = std::ranges::find_if_not(voices_, &Voice::active);
-        if (free != voices_.end()) {
-            free->start(message.note, message.velocity, instrument_, generator_.split());
+        Voice& voice = voices_[choose_voice(voices_.span())];
+        if (voice.active()) {
+            // The stolen voice fades out in a copy, so its own voice starts the note on this frame.
+            Voice& fade = fades_[choose_fade_slot(fades_.span())];
+            fade = voice;
+            fade.fade_out();
         }
+        voice.start(message.note, message.velocity, instrument_, generator_.split(),
+                    notes_started_++);
         break;
     }
     case Message::Kind::note_off:
@@ -179,7 +189,9 @@ void Player::apply(const Message& message) IRAMA_NONBLOCKING {
         break;
     case Message::Kind::set_parameter:
         // While no voice sounds, nothing would hear a glide, so the value jumps.
-        instrument_.set(message.param, message.value, std::ranges::any_of(voices_, &Voice::active));
+        instrument_.set(message.param, message.value,
+                        std::ranges::any_of(voices_, &Voice::active) ||
+                            std::ranges::any_of(fades_, &Voice::active));
         break;
     }
 }
@@ -189,6 +201,9 @@ void Player::render_block(std::span<float> out) IRAMA_NONBLOCKING {
     const InstrumentBlock block = instrument_.render(out.size() / channels);
     for (Voice& voice : voices_) {
         voice.render(out, scratch_.span(), block);
+    }
+    for (Voice& fade : fades_) {
+        fade.render(out, scratch_.span(), block);
     }
 }
 

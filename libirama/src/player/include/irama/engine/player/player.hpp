@@ -29,7 +29,8 @@ namespace irama {
 struct PlayerConfig {
     /// The sample rate in hertz, above 0.
     std::uint32_t sample_rate = 48'000;
-    /// How many voices can sound at once, from 1 to `Player::max_voices_limit`.
+    /// How many voices can sound at once, from 1 to `Player::max_voices_limit`. Stolen voices
+    /// fading out don't count.
     std::size_t max_voices = 32;
     /// The seed of the player's random numbers. The player keeps one `Pcg32`, of this seed on
     /// stream 0, and each note-on splits the new voice's noise generator from it, so voices' noise
@@ -93,6 +94,11 @@ using PlayerPtr = OwnedPtr<Player>;
 /// depends on how the host splits its render calls. A frame already rendered applies at the first
 /// frame of the next render call, so a message meant to apply at once can name frame 0.
 ///
+/// A note-on with every voice sounding steals one, as `choose_voice()` chooses: the oldest in its
+/// release, or else the quietest, or else the oldest. The stolen voice fades out over 5 ms in one
+/// of `fade_slots` fade slots beside the voices, while its own voice starts the new note on the
+/// note-on's frame. With every fade slot busy, the fade nearest its end is cut.
+///
 /// All its memory is allocated when it is created, and it never moves, so the pointer the audio
 /// thread holds stays valid.
 class Player {
@@ -104,6 +110,9 @@ class Player {
   public:
     /// The most voices a player can have.
     static constexpr std::size_t max_voices_limit = 256;
+
+    /// How many stolen voices can fade out at once.
+    static constexpr std::size_t fade_slots = 8;
 
     /// How many control messages can wait in the queue, and the most that one render call applies.
     static constexpr std::size_t queue_capacity = 1'024;
@@ -132,7 +141,7 @@ class Player {
     ~Player() = default;
 
     /// Queues a note-on: a free voice starts playing the note at `frame`. With no voice free, the
-    /// note is ignored.
+    /// note steals one, which fades out.
     ///
     /// Call it on the control thread, with frames that never go backwards from one control
     /// message to the next, which is checked where `NDEBUG` isn't defined.
@@ -185,7 +194,8 @@ class Player {
     ///            right, overwriting what it holds. Its length is even, which is checked.
     void render(std::span<float> out) IRAMA_NONBLOCKING;
 
-    /// \return How many voices were sounding at the end of the latest render call. It may be
+    /// \return How many voices were sounding at the end of the latest render call, not counting
+    ///         stolen voices fading out, so never more than the config's `max_voices`. It may be
     ///         read on any thread.
     [[nodiscard]] std::uint32_t active_voices() const;
 
@@ -207,6 +217,10 @@ class Player {
     // The live value of each of the instrument's parameters, which only the audio thread touches.
     Instrument instrument_;
     OwnedArray<Voice> voices_;
+    // The stolen voices fading out.
+    OwnedArray<Voice> fades_;
+    // How many notes the player has started, which orders its voices from oldest to newest.
+    std::uint64_t notes_started_ = 0;
     // The generator each note-on splits its voice's noise generator from.
     Pcg32 generator_;
     // Each voice's working, for one block.

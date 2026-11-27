@@ -80,6 +80,9 @@ class Adsr {
     /// \return Whether the envelope is in its release.
     [[nodiscard]] bool releasing() const;
 
+    /// \return The level of the latest frame written, which is 0 before the first.
+    [[nodiscard]] float level() const;
+
   private:
     enum class Stage : std::uint8_t { ended, attack, decay, sustain, release };
 

@@ -35,7 +35,18 @@ void mix_noise(std::span<float> wave, std::span<const float> noise,
 
 namespace irama {
 
-void Voice::start(int note, float velocity, const Instrument& instrument, const Pcg32& noise) {
+namespace {
+
+// A length in seconds as a whole number of frames, at least one.
+[[nodiscard]] std::uint32_t frames_of(float seconds, float sample_rate) {
+    return std::max<std::uint32_t>(
+        1, irama::narrow<std::uint32_t>(std::lround(seconds * sample_rate)));
+}
+
+} // namespace
+
+void Voice::start(int note, float velocity, const Instrument& instrument, const Pcg32& noise,
+                  std::uint64_t order) {
     IRAMA_ASSERT(velocity >= 0.0F && velocity <= 1.0F, "a velocity is from 0 to 1");
     const float sample_rate = instrument.sample_rate();
     frequency_ = note_frequency(note);
@@ -44,20 +55,29 @@ void Voice::start(int note, float velocity, const Instrument& instrument, const 
     chain_.filter.reset();
     chain_.filter_mode = instrument.filter_mode();
     chain_.filter_slope = instrument.filter_slope();
-    crossfade_frames_ = std::max<std::uint32_t>(
-        1, narrow<std::uint32_t>(std::lround(crossfade_seconds * sample_rate)));
+    crossfade_frames_ = frames_of(crossfade_seconds, sample_rate);
     crossfade_position_ = crossfade_frames_;
+    fade_frames_ = frames_of(steal_fade_seconds, sample_rate);
+    stolen_ = false;
+    fade_position_ = 0;
     noise_.start(noise);
     envelope_.start(instrument.envelope(), sample_rate);
     velocity_gain_ = instrument.velocity_gain(velocity);
+    order_ = order;
     note_ = note;
 }
 
 void Voice::release(const Instrument& instrument) { envelope_.release(instrument.envelope()); }
 
+void Voice::fade_out() {
+    IRAMA_DEBUG_ASSERT(active() && !stolen_, "only a sounding voice that isn't fading can fade");
+    stolen_ = true;
+    fade_position_ = 0;
+}
+
 void Voice::render(std::span<float> out, std::span<float> scratch,
                    const InstrumentBlock& block) IRAMA_NONBLOCKING {
-    if (!envelope_.active()) {
+    if (!active()) {
         return;
     }
     IRAMA_ASSERT(out.size() % 2 == 0, "stereo frames have two samples each");
@@ -72,6 +92,14 @@ void Voice::render(std::span<float> out, std::span<float> scratch,
     render_chains(wave, other, third, block);
     // The envelope's levels.
     envelope_.render(third, block.sustain, block.envelope);
+    if (stolen_) {
+        // Frame i of the fade is at 1 − (i + 1) / n of the level, and every frame after it at 0.
+        const auto length = static_cast<float>(fade_frames_);
+        for (float& level : third) {
+            fade_position_ = std::min(fade_position_ + 1, fade_frames_);
+            level *= 1.0F - (static_cast<float>(fade_position_) / length);
+        }
+    }
     auto sample = out.begin();
     for (const auto [wave_sample, level, left, right] :
          std::views::zip(wave, third, block.left_gain, block.right_gain)) {
@@ -124,9 +152,21 @@ void Voice::render_chains(std::span<float> wave, std::span<float> other, std::sp
     }
 }
 
-bool Voice::active() const { return envelope_.active(); }
+bool Voice::active() const {
+    return envelope_.active() && (!stolen_ || fade_position_ < fade_frames_);
+}
 
-bool Voice::held() const { return envelope_.active() && !envelope_.releasing(); }
+bool Voice::held() const { return active() && !stolen_ && !envelope_.releasing(); }
+
+bool Voice::releasing() const { return active() && envelope_.releasing(); }
+
+bool Voice::fading() const { return active() && stolen_; }
+
+std::uint32_t Voice::fade_frames_left() const { return fade_frames_ - fade_position_; }
+
+float Voice::level() const { return envelope_.level() * velocity_gain_; }
+
+std::uint64_t Voice::order() const { return order_; }
 
 int Voice::note() const { return note_; }
 

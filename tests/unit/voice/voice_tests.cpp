@@ -24,6 +24,7 @@
 #include <complex>
 #include <cstddef>
 #include <numbers>
+#include <ranges>
 #include <span>
 #include <vector>
 
@@ -84,6 +85,40 @@ void set_waveform(irama::Instrument& instrument, irama::Waveform waveform) {
     irama::Instrument instrument{sample_rate};
     set_waveform(instrument, waveform);
     return instrument;
+}
+
+// Two voices playing A-4 alike for 1,000 frames, each reading its own instrument.
+struct Twins {
+    irama::Instrument instrument;
+    irama::Instrument twin_instrument;
+    irama::Voice voice;
+    irama::Voice twin;
+};
+
+[[nodiscard]] Twins make_twins(float sample_rate) {
+    Twins twins{
+        .instrument = irama::Instrument{sample_rate},
+        .twin_instrument = irama::Instrument{sample_rate},
+        .voice = {},
+        .twin = {},
+    };
+    twins.voice.start(57, 1.0F, twins.instrument, irama::Pcg32{});
+    twins.twin.start(57, 1.0F, twins.twin_instrument, irama::Pcg32{});
+    static_cast<void>(render(twins.voice, twins.instrument, 1'000));
+    static_cast<void>(render(twins.twin, twins.twin_instrument, 1'000));
+    return twins;
+}
+
+// Requires each frame `i` of `out` to be `1 − (i + 1) / n` of the same frame of `unfaded`: the
+// frames of a fade of `n`.
+void require_faded(std::span<const float> out, std::span<const float> unfaded, std::size_t fade) {
+    REQUIRE(out.size() == unfaded.size());
+    for (const auto [index, sample, unfaded_sample] :
+         std::views::zip(std::views::iota(std::size_t{0}), out, unfaded)) {
+        const std::size_t frame = index / 2;
+        const double gain = 1.0 - (static_cast<double>(frame + 1) / static_cast<double>(fade));
+        REQUIRE_THAT(sample, WithinAbs(gain * static_cast<double>(unfaded_sample), 1e-6));
+    }
 }
 
 // A stepped change to one of the instrument's parameters.
@@ -455,4 +490,58 @@ TEST_CASE("a coarse step during a note jumps in pitch with a continuous phase", 
         const double expected = filtered_sine(sustain_gain, 880.0, phase);
         REQUIRE_THAT(out.at(2 * frame), WithinAbs(expected, 1e-4));
     }
+}
+
+TEST_CASE("a stolen voice fades out linearly over exactly 5 ms", "[voice]") {
+    const float sample_rate = GENERATE(48'000.0F, 44'100.0F);
+    // 5 ms, rounded to the nearest frame.
+    const std::size_t fade = sample_rate == 48'000.0F ? 240 : 221;
+    auto twins = make_twins(sample_rate);
+
+    twins.voice.fade_out();
+    REQUIRE(twins.voice.fading());
+    REQUIRE_FALSE(twins.voice.held());
+    REQUIRE(twins.voice.fade_frames_left() == fade);
+    const auto out = render(twins.voice, twins.instrument, fade - 1);
+    const auto unfaded = render(twins.twin, twins.twin_instrument, fade - 1);
+    require_faded(out, unfaded, fade);
+    REQUIRE(out.at(2 * (fade - 2)) != 0.0F);
+}
+
+TEST_CASE("a fading voice is silent on its fade's last frame, and free on the next", "[voice]") {
+    auto twins = make_twins(rate);
+    twins.voice.fade_out();
+    static_cast<void>(render(twins.voice, twins.instrument, 239));
+    REQUIRE(twins.voice.active());
+    REQUIRE(twins.voice.fade_frames_left() == 1);
+    REQUIRE(render(twins.voice, twins.instrument, 1) == std::vector<float>(2, 0.0F));
+    REQUIRE_FALSE(twins.voice.active());
+    REQUIRE_FALSE(twins.voice.fading());
+    REQUIRE(render(twins.voice, twins.instrument, 100) == std::vector<float>(200, 0.0F));
+}
+
+TEST_CASE("a fade that crosses blocks lasts as long as one inside a block", "[voice]") {
+    auto twins = make_twins(rate);
+    twins.voice.fade_out();
+    twins.twin.fade_out();
+    std::vector<float> split(600);
+    render(twins.voice, twins.instrument, std::span{split}.first(14));
+    render(twins.voice, twins.instrument, std::span{split}.subspan(14, 400));
+    render(twins.voice, twins.instrument, std::span{split}.subspan(414));
+    REQUIRE(split == render(twins.twin, twins.twin_instrument, 300));
+}
+
+TEST_CASE("a voice whose release ends during its fade is free when the release ends", "[voice]") {
+    irama::Instrument instrument{rate};
+    instrument.set(index_of(irama::InstrumentParam::release), 0.001F, false);
+    irama::Voice voice;
+    voice.start(57, 1.0F, instrument, irama::Pcg32{});
+    static_cast<void>(render(voice, instrument, 1'000));
+    voice.release(instrument);
+    voice.fade_out();
+    // The release lasts 48 frames, less than the fade's 240.
+    static_cast<void>(render(voice, instrument, 47));
+    REQUIRE(voice.active());
+    static_cast<void>(render(voice, instrument, 1));
+    REQUIRE_FALSE(voice.active());
 }

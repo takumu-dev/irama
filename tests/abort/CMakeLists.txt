@@ -201,6 +201,10 @@ irama_assertion_report(parameter_nan player.cpp "!std::isnan(value)" "a paramete
 irama_assertion_report(odd_length player.cpp
     "out.size() % channels == 0" "stereo frames have two samples each"
 )
+irama_assertion_report(voice_count player.cpp
+    "config.max_voices > 0 && config.max_voices <= max_voices_limit"
+    "a player has from 1 to 256 voices"
+)
 irama_assertion_report(backwards player.cpp
     "message.frame >= last_queued_frame_" "control messages are sent in the order of their frames"
 )
@@ -238,6 +242,16 @@ irama_add_abort_test(player "rendering half a frame aborts with its report"
     PROGRAM irama_abort_player
     ARGUMENTS odd-length
     REPORT "${odd_length}"
+)
+irama_add_abort_test(player "a player of more than 256 voices aborts with its report"
+    PROGRAM irama_abort_player
+    ARGUMENTS too-many-voices
+    REPORT "${voice_count}"
+)
+irama_add_abort_test(player "a player of no voices aborts with its report"
+    PROGRAM irama_abort_player
+    ARGUMENTS no-voices
+    REPORT "${voice_count}"
 )
 # The order of frames is an IRAMA_DEBUG_ASSERT, compiled out of libirama's release builds.
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
