@@ -5,6 +5,7 @@
 
 #include <irama/engine/base/assertion.hpp>
 #include <irama/engine/base/nonblocking.hpp>
+#include <irama/engine/filter/svf.hpp>
 #include <irama/engine/param/param_descriptor.hpp>
 #include <irama/engine/param/param_id.hpp>
 #include <irama/engine/param/param_smoother.hpp>
@@ -38,6 +39,10 @@ constexpr std::size_t osc1_pulse_width = index_of(InstrumentParam::osc1_pulse_wi
 constexpr std::size_t osc1_coarse = index_of(InstrumentParam::osc1_coarse);
 constexpr std::size_t osc1_fine = index_of(InstrumentParam::osc1_fine);
 constexpr std::size_t noise_level = index_of(InstrumentParam::noise_level);
+constexpr std::size_t filter_mode_index = index_of(InstrumentParam::filter_mode);
+constexpr std::size_t filter_slope_index = index_of(InstrumentParam::filter_slope);
+constexpr std::size_t cutoff = index_of(InstrumentParam::cutoff);
+constexpr std::size_t resonance = index_of(InstrumentParam::resonance);
 constexpr std::size_t gain = index_of(InstrumentParam::gain);
 constexpr std::size_t pan = index_of(InstrumentParam::pan);
 constexpr std::size_t velocity_sensitivity = index_of(InstrumentParam::velocity_sensitivity);
@@ -103,6 +108,14 @@ Waveform Instrument::waveform() const {
     return static_cast<Waveform>(static_cast<int>(params_.at(osc1_waveform).value()));
 }
 
+FilterMode Instrument::filter_mode() const {
+    return static_cast<FilterMode>(static_cast<int>(params_.at(filter_mode_index).value()));
+}
+
+FilterSlope Instrument::filter_slope() const {
+    return static_cast<FilterSlope>(static_cast<int>(params_.at(filter_slope_index).value()));
+}
+
 AdsrSettings Instrument::envelope() const {
     return AdsrSettings{
         .attack_seconds = params_.at(attack).value(),
@@ -125,6 +138,7 @@ InstrumentBlock Instrument::render(std::size_t frames) IRAMA_NONBLOCKING {
     const auto pulse_widths = std::span{pulse_width_}.first(frames);
     const auto tunings = std::span{tuning_}.first(frames);
     const auto noise_levels = std::span{noise_level_}.first(frames);
+    const auto filters = std::span{filter_}.first(frames);
     const auto sustain_levels = std::span{sustain_}.first(frames);
     const auto left = std::span{left_gain_}.first(frames);
     const auto right = std::span{right_gain_}.first(frames);
@@ -145,6 +159,19 @@ InstrumentBlock Instrument::render(std::size_t frames) IRAMA_NONBLOCKING {
         std::ranges::fill(
             tunings, tuning_ratio(coarse + (params_.at(osc1_fine).value() / cents_per_semitone)));
     }
+    if (params_.at(cutoff).ramping() || params_.at(resonance).ramping()) {
+        // The cutoff's hertz and the resonance's percentages go through the gains' buffers on the
+        // way, before the gains are computed.
+        params_.at(cutoff).render(left);
+        params_.at(resonance).render(right);
+        for (const auto [coefficients, hertz, percentage] : std::views::zip(filters, left, right)) {
+            coefficients = svf_coefficients(hertz, percentage / percent, sample_rate_);
+        }
+    } else {
+        std::ranges::fill(filters,
+                          svf_coefficients(params_.at(cutoff).value(),
+                                           params_.at(resonance).value() / percent, sample_rate_));
+    }
     if (params_.at(gain).ramping() || params_.at(pan).ramping()) {
         // The gain's decibels and the pan's positions go through the gains' buffers on the way.
         params_.at(gain).render(left);
@@ -160,6 +187,8 @@ InstrumentBlock Instrument::render(std::size_t frames) IRAMA_NONBLOCKING {
     }
 
     const Waveform block_waveform = waveform();
+    const FilterMode block_filter_mode = filter_mode();
+    const FilterSlope block_filter_slope = filter_slope();
     const AdsrSettings settings = envelope();
     for (ParamSmoother& param : params_) {
         param.advance(frames);
@@ -170,6 +199,9 @@ InstrumentBlock Instrument::render(std::size_t frames) IRAMA_NONBLOCKING {
         .pulse_width = pulse_widths,
         .tuning = tunings,
         .noise_level = noise_levels,
+        .filter_mode = block_filter_mode,
+        .filter_slope = block_filter_slope,
+        .filter = filters,
         .envelope = settings,
         .sustain = sustain_levels,
         .left_gain = left,

@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: 2026 takumu-dev
+# SPDX-License-Identifier: Zlib
+
+# One note through a slow attack and decay to a held sustain, then a release that ends exactly on
+# frame 16560, after which the file is silent.
+at 0      set-parameter 3000 0.03   # attack, 1440 frames
+at 0      set-parameter 3001 0.07   # decay, 3360 frames
+at 0      set-parameter 3002 50     # sustain
+at 0      set-parameter 3003 0.12   # release, 5760 frames
+at 0      set-parameter 1002 2500   # cutoff
+at 0      note-on A-3 1
+at 10800  note-off A-3

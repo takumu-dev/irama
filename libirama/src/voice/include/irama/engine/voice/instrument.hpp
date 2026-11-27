@@ -7,6 +7,7 @@
 #pragma once
 
 #include <irama/engine/base/nonblocking.hpp>
+#include <irama/engine/filter/svf.hpp>
 #include <irama/engine/param/param_descriptor.hpp>
 #include <irama/engine/param/param_id.hpp>
 #include <irama/engine/param/param_smoother.hpp>
@@ -206,6 +207,12 @@ struct InstrumentBlock {
     std::span<const float> tuning;
     /// The noise's level of each frame, from 0 to 1.
     std::span<const float> noise_level;
+    /// The filter's mode, which holds for the whole block, as the waveform does.
+    FilterMode filter_mode = FilterMode::low_pass;
+    /// The filter's slope, which holds for the whole block.
+    FilterSlope filter_slope = FilterSlope::db12;
+    /// What the filter computes with at each frame, from the cutoff and the resonance.
+    std::span<const SvfCoefficients> filter;
     /// The envelope's times and curves, which a segment starting during the block latches.
     AdsrSettings envelope;
     /// The sustain level of each frame, from 0 to 1.
@@ -223,7 +230,8 @@ struct InstrumentBlock {
 /// advances them every frame, whether a voice reads them or not. The amplifier's gain is in
 /// decibels, and its pan is constant-power, `cos θ` on the left and `sin θ` on the right, with θ
 /// from 0 at −1 to π/2 at +1, so a centred voice is 3 dB down on each side. Both are computed every
-/// frame, and so is the tuning, `tuning_ratio(coarse + fine / 100)`.
+/// frame, and so are the tuning, `tuning_ratio(coarse + fine / 100)`, and the filter's
+/// coefficients, `svf_coefficients()` of the cutoff and the resonance.
 class Instrument {
   public:
     /// The most frames `render()` computes at once.
@@ -252,6 +260,12 @@ class Instrument {
     /// \return The oscillator's waveform, as it is now.
     [[nodiscard]] Waveform waveform() const;
 
+    /// \return The filter's mode, as it is now.
+    [[nodiscard]] FilterMode filter_mode() const;
+
+    /// \return The filter's slope, as it is now.
+    [[nodiscard]] FilterSlope filter_slope() const;
+
     /// \return The envelope's times and curves, as they are now.
     [[nodiscard]] AdsrSettings envelope() const;
 
@@ -275,6 +289,7 @@ class Instrument {
     std::array<float, max_block_frames> pulse_width_{};
     std::array<float, max_block_frames> tuning_{};
     std::array<float, max_block_frames> noise_level_{};
+    std::array<SvfCoefficients, max_block_frames> filter_{};
     std::array<float, max_block_frames> sustain_{};
     std::array<float, max_block_frames> left_gain_{};
     std::array<float, max_block_frames> right_gain_{};

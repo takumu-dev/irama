@@ -5,6 +5,7 @@
 
 #include <irama/engine/base/nonblocking.hpp>
 #include <irama/engine/base/render_scope.hpp>
+#include <irama/engine/filter/svf.hpp>
 #include <irama/engine/param/param_descriptor.hpp>
 #include <irama/engine/param/param_id.hpp>
 #include <irama/engine/source/oscillator.hpp>
@@ -53,12 +54,15 @@ struct Rendered {
     std::vector<float> pulse_width;
     std::vector<float> tuning;
     std::vector<float> noise_level;
-    // The waveform of each block.
+    std::vector<irama::SvfCoefficients> filter;
+    // The waveform, the filter's mode and the filter's slope of each block.
     std::vector<irama::Waveform> waveform;
+    std::vector<irama::FilterMode> filter_mode;
+    std::vector<irama::FilterSlope> filter_slope;
 };
 
 // Appends one block's values to those gathered so far.
-void append(std::vector<float>& gathered, std::span<const float> block) {
+template <typename Value> void append(std::vector<Value>& gathered, std::span<const Value> block) {
     gathered.insert(gathered.end(), block.begin(), block.end());
 }
 
@@ -82,7 +86,10 @@ void append(std::vector<float>& gathered, std::span<const float> block) {
         append(rendered.pulse_width, block.pulse_width);
         append(rendered.tuning, block.tuning);
         append(rendered.noise_level, block.noise_level);
+        append(rendered.filter, block.filter);
         rendered.waveform.push_back(block.waveform);
+        rendered.filter_mode.push_back(block.filter_mode);
+        rendered.filter_slope.push_back(block.filter_slope);
     }
     return rendered;
 }
@@ -348,5 +355,55 @@ TEST_CASE("a coarse step changes the tuning at once, and a fine change glides ov
     }
     for (std::size_t frame = ramp_frames - 1; frame < rendered.tuning.size(); ++frame) {
         REQUIRE(rendered.tuning.at(frame) == irama::tuning_ratio(13.0F));
+    }
+}
+
+TEST_CASE("the filter starts low-pass at 12 dB, open at 20 kHz with no resonance", "[voice]") {
+    irama::Instrument instrument{rate};
+    REQUIRE(instrument.filter_mode() == irama::FilterMode::low_pass);
+    REQUIRE(instrument.filter_slope() == irama::FilterSlope::db12);
+    const Rendered rendered = render(instrument, 300);
+    REQUIRE(rendered.filter_mode ==
+            std::vector{irama::FilterMode::low_pass, irama::FilterMode::low_pass});
+    REQUIRE(rendered.filter_slope ==
+            std::vector{irama::FilterSlope::db12, irama::FilterSlope::db12});
+    REQUIRE(rendered.filter == std::vector(300, irama::svf_coefficients(20'000.0F, 0.0F, rate)));
+}
+
+TEST_CASE("the filter's mode and slope follow their stepped values", "[voice]") {
+    irama::Instrument instrument{rate};
+    instrument.set(index_of(InstrumentParam::filter_mode), 3.0F, false);
+    instrument.set(index_of(InstrumentParam::filter_slope), 1.0F, false);
+    REQUIRE(instrument.filter_mode() == irama::FilterMode::notch);
+    REQUIRE(instrument.filter_slope() == irama::FilterSlope::db24);
+    const Rendered rendered = render(instrument, 1);
+    REQUIRE(rendered.filter_mode.front() == irama::FilterMode::notch);
+    REQUIRE(rendered.filter_slope.front() == irama::FilterSlope::db24);
+}
+
+TEST_CASE("the filter's coefficients are those of the cutoff and the resonance as a fraction",
+          "[voice]") {
+    irama::Instrument instrument{rate};
+    instrument.set(index_of(InstrumentParam::cutoff), 1'000.0F, false);
+    instrument.set(index_of(InstrumentParam::resonance), 50.0F, false);
+    REQUIRE(render(instrument, 10).filter ==
+            std::vector(10, irama::svf_coefficients(1'000.0F, 0.5F, rate)));
+}
+
+TEST_CASE("the filter's coefficients follow the smoothed cutoff and resonance every frame",
+          "[voice]") {
+    irama::Instrument instrument{rate};
+    instrument.set(index_of(InstrumentParam::cutoff), 200.0F, true);
+    instrument.set(index_of(InstrumentParam::resonance), 100.0F, true);
+    const Rendered rendered = render(instrument, ramp_frames + 10);
+    // The cutoff falls and the resonance rises on every frame of the ramp, and arrive on its last.
+    for (std::size_t frame = 1; frame < ramp_frames; ++frame) {
+        REQUIRE(rendered.filter.at(frame).g < rendered.filter.at(frame - 1).g);
+        REQUIRE(rendered.filter.at(frame).resonant.damping <
+                rendered.filter.at(frame - 1).resonant.damping);
+    }
+    const irama::SvfCoefficients arrived = irama::svf_coefficients(200.0F, 1.0F, rate);
+    for (std::size_t frame = ramp_frames - 1; frame < rendered.filter.size(); ++frame) {
+        REQUIRE(rendered.filter.at(frame) == arrived);
     }
 }
