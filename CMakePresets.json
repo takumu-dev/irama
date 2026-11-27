@@ -67,14 +67,18 @@
       "name": "msvc",
       "hidden": true,
       "inherits": "windows",
-      "$comment": "Run from a developer command prompt for MSVC 14.52 or newer, which puts cl on the PATH and picks the architecture.",
+      "$comment": [
+        "Run from a developer command prompt for MSVC 14.52 or newer, which puts cl on the PATH and picks the architecture.",
+        "Studio is built and checked on Linux only, so these presets leave it out."
+      ],
       "architecture": {
         "value": "x64",
         "strategy": "external"
       },
       "cacheVariables": {
         "CMAKE_C_COMPILER": "cl",
-        "CMAKE_CXX_COMPILER": "cl"
+        "CMAKE_CXX_COMPILER": "cl",
+        "IRAMA_BUILD_STUDIO": false
       }
     },
     {
@@ -170,6 +174,7 @@
       "description": "Every part but libirama switched off, so vcpkg installs only libirama's own dependencies, as a game building it would see.",
       "cacheVariables": {
         "IRAMA_BUILD_CLI": false,
+        "IRAMA_BUILD_STUDIO": false,
         "IRAMA_BUILD_TESTS": false
       }
     },
@@ -180,6 +185,7 @@
       "description": "Checks the formatting with clang-format and the documentation of the public headers with Doxygen, building nothing else.",
       "cacheVariables": {
         "IRAMA_BUILD_CLI": false,
+        "IRAMA_BUILD_STUDIO": false,
         "IRAMA_BUILD_TESTS": false
       }
     },
@@ -190,6 +196,7 @@
       "description": "Builds every part with clang-tidy run on every C++ source.",
       "cacheVariables": {
         "IRAMA_BUILD_CLI": true,
+        "IRAMA_BUILD_STUDIO": true,
         "IRAMA_BUILD_TESTS": true,
         "IRAMA_CLANG_TIDY": true,
         "IRAMA_REALTIME_GUARD": true
@@ -229,7 +236,17 @@
     { "name": "msvc-debug", "inherits": "test", "configurePreset": "msvc-debug" },
     { "name": "msvc-release", "inherits": "test", "configurePreset": "msvc-release" },
     { "name": "clang-asan", "inherits": "test", "configurePreset": "clang-asan" },
-    { "name": "clang-tsan", "inherits": "test", "configurePreset": "clang-tsan" },
+    {
+      "name": "clang-tsan",
+      "inherits": "test",
+      "configurePreset": "clang-tsan",
+      "$comment": "SDL3 and the Vulkan driver aren't built with ThreadSanitizer, so their threads would give false reports in the test that starts Studio.",
+      "filter": {
+        "exclude": {
+          "label": "smoke"
+        }
+      }
+    },
     { "name": "clang-rtsan", "inherits": "test", "configurePreset": "clang-rtsan" }
   ],
   "workflowPresets": [

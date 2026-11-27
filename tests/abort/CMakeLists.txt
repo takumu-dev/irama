@@ -86,6 +86,31 @@ irama_add_abort_test(base "narrowing a negative value to an unsigned type aborts
     REPORT "${narrowed}"
 )
 
+irama_assertion_report(no_bytes allocator.cpp "size != 0" "an allocation has at least one byte")
+irama_assertion_report(no_alignment allocator.cpp "std::has_single_bit(alignment)"
+    "an alignment is a power of two"
+)
+irama_add_abort_test(base "allocating no bytes aborts with its report"
+    PROGRAM irama_abort_assertions_checked
+    ARGUMENTS allocate-nothing
+    REPORT "${no_bytes}"
+)
+irama_add_abort_test(base "allocating with an alignment that isn't a power of two aborts with its report"
+    PROGRAM irama_abort_assertions_checked
+    ARGUMENTS allocate-misaligned
+    REPORT "${no_alignment}"
+)
+irama_add_abort_test(base "freeing no bytes aborts with its report"
+    PROGRAM irama_abort_assertions_checked
+    ARGUMENTS free-nothing
+    REPORT "${no_bytes}"
+)
+irama_add_abort_test(base "freeing with an alignment that isn't a power of two aborts with its report"
+    PROGRAM irama_abort_assertions_checked
+    ARGUMENTS free-misaligned
+    REPORT "${no_alignment}"
+)
+
 # The checks of irama/engine/base/render_scope.hpp, made by the real-time guard where it is compiled
 # in, and by RealtimeSanitizer in its place where that is on.
 find_package(Threads REQUIRED)
@@ -136,12 +161,108 @@ irama_add_render_scope_test(aligned-new-inside "aligned new inside a render scop
 )
 irama_add_render_scope_test(aligned-delete-inside "aligned delete inside a render scope" freed free)
 irama_add_render_scope_test(new-after-nested "new after a nested render scope ends" allocated malloc)
+# The default allocator calls aligned_alloc and free.
+irama_add_render_scope_test(entry-allocate-inside
+    "allocating through the entry point inside a render scope" allocated aligned_alloc
+)
+irama_add_render_scope_test(entry-free-inside "freeing through the entry point inside a render scope"
+    freed free
+)
 
 irama_add_abort_test(base "new and aligned new outside any render scope are allowed"
     PROGRAM irama_abort_render_scope
     ARGUMENTS new-outside
 )
+irama_add_abort_test(base "allocating and freeing through the entry point outside any render scope is allowed"
+    PROGRAM irama_abort_render_scope
+    ARGUMENTS entry-outside
+)
 irama_add_abort_test(base "new while another thread renders is allowed"
     PROGRAM irama_abort_render_scope
     ARGUMENTS new-beside
 )
+
+# The checks of irama/engine/player/player.hpp, which stop a bad value on the control thread, or a
+# bad buffer at the render call.
+add_executable(irama_abort_player player.cpp)
+target_link_libraries(irama_abort_player PRIVATE irama::player)
+irama_target_conventions(irama_abort_player)
+
+irama_assertion_report(bad_note player.cpp
+    "note >= lowest_note && note <= highest_note" "a note is between C-0 and B-9"
+)
+irama_assertion_report(bad_velocity player.cpp
+    "velocity >= 0.0F && velocity <= 1.0F" "a velocity is from 0 to 1"
+)
+irama_assertion_report(unknown_parameter player.cpp
+    "index.has_value()" "a parameter's ID is one of the instrument's"
+)
+irama_assertion_report(parameter_nan player.cpp "!std::isnan(value)" "a parameter's value is a number")
+irama_assertion_report(odd_length player.cpp
+    "out.size() % channels == 0" "stereo frames have two samples each"
+)
+irama_assertion_report(voice_count player.cpp
+    "config.max_voices > 0 && config.max_voices <= max_voices_limit"
+    "a player has from 1 to 256 voices"
+)
+irama_assertion_report(backwards player.cpp
+    "message.frame >= last_queued_frame_" "control messages are sent in the order of their frames"
+)
+irama_add_abort_test(player "a note-on above B-9 aborts with its report"
+    PROGRAM irama_abort_player
+    ARGUMENTS note-too-high
+    REPORT "${bad_note}"
+)
+irama_add_abort_test(player "a note-off below C-0 aborts with its report"
+    PROGRAM irama_abort_player
+    ARGUMENTS note-negative
+    REPORT "${bad_note}"
+)
+irama_add_abort_test(player "a velocity above 1 aborts with its report"
+    PROGRAM irama_abort_player
+    ARGUMENTS velocity-too-high
+    REPORT "${bad_velocity}"
+)
+irama_add_abort_test(player "a velocity that isn't a number aborts with its report"
+    PROGRAM irama_abort_player
+    ARGUMENTS velocity-nan
+    REPORT "${bad_velocity}"
+)
+irama_add_abort_test(player "a set-parameter with an ID the instrument hasn't aborts with its report"
+    PROGRAM irama_abort_player
+    ARGUMENTS unknown-parameter
+    REPORT "${unknown_parameter}"
+)
+irama_add_abort_test(player "a set-parameter with a value that isn't a number aborts with its report"
+    PROGRAM irama_abort_player
+    ARGUMENTS parameter-nan
+    REPORT "${parameter_nan}"
+)
+irama_add_abort_test(player "rendering half a frame aborts with its report"
+    PROGRAM irama_abort_player
+    ARGUMENTS odd-length
+    REPORT "${odd_length}"
+)
+irama_add_abort_test(player "a player of more than 256 voices aborts with its report"
+    PROGRAM irama_abort_player
+    ARGUMENTS too-many-voices
+    REPORT "${voice_count}"
+)
+irama_add_abort_test(player "a player of no voices aborts with its report"
+    PROGRAM irama_abort_player
+    ARGUMENTS no-voices
+    REPORT "${voice_count}"
+)
+# The order of frames is an IRAMA_DEBUG_ASSERT, compiled out of libirama's release builds.
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    irama_add_abort_test(player "a frame before the last goes unchecked where NDEBUG is defined"
+        PROGRAM irama_abort_player
+        ARGUMENTS frames-backwards
+    )
+else()
+    irama_add_abort_test(player "a frame before the last aborts with its report"
+        PROGRAM irama_abort_player
+        ARGUMENTS frames-backwards
+        REPORT "${backwards}"
+    )
+endif()

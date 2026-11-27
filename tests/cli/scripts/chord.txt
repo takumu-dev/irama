@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: 2026 takumu-dev
+# SPDX-License-Identifier: Zlib
+
+# A C major chord, then an F major chord over it, then everything released.
+at 0      note-on C-4 0.8
+at 0      note-on E-4 0.7   # a velocity for each note
+at 0      note-on G-4 0.7
+at 12000  note-on F-4 0.6
+at 12000  note-on A-4 0.6
+at 12000  note-on C-5 0.6
+at 18000  note-off C-4
+at 24000  release-all

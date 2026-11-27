@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: 2026 takumu-dev
+# SPDX-License-Identifier: Zlib
+
+irama_add_tests(voice
+    SOURCES
+        adsr_tests.cpp
+        instrument_tests.cpp
+        voice_allocation_tests.cpp
+        voice_tests.cpp
+)

@@ -5,11 +5,13 @@ SPDX-License-Identifier: Zlib
 
 # Irama
 
-A music tracker with built-in synthesisers. The repository holds two parts:
+A music tracker with built-in synthesisers. The repository holds three parts:
 
 - **libirama**, the library that games and apps embed. Its public interface is the C header
   `irama.h`. It is under the zlib licence, so a game can ship it with no extra legal text.
 - **irama-cli**, a command-line tool that drives libirama, under GPL-3.0-or-later.
+- **Irama Studio**, the tracker itself, a window drawn with SDL3 and Dear ImGui, under
+  GPL-3.0-or-later. It is built and checked on Linux.
 
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) describes how they fit together.
 
@@ -31,6 +33,11 @@ command prompt for MSVC 14.52 or newer, which picks the compiler and the archite
 [vcpkg](https://vcpkg.io) are needed too: every dependency comes from the vcpkg manifest, found
 through the `VCPKG_ROOT` environment variable, and the build never downloads anything itself.
 
+vcpkg builds SDL3 for Studio from source, against the system's Wayland and X11 development files:
+on Debian or Ubuntu, `libegl-dev`, `libwayland-dev`, `libx11-dev`, `libxext-dev` and
+`libxkbcommon-dev`. Without them SDL leaves out that video driver, and a test fails. Studio draws
+through Vulkan, so running it, or its smoke test, needs a Vulkan driver.
+
 ## Building
 
 Every supported configuration is a preset in `CMakePresets.json`, and a workflow preset configures,
@@ -44,7 +51,7 @@ cmake --workflow --preset gcc-debug
 |---|---|
 | `gcc-debug`, `gcc-release` | GCC |
 | `clang-debug`, `clang-release` | Clang with libstdc++ |
-| `msvc-debug`, `msvc-release` | MSVC, on Windows |
+| `msvc-debug`, `msvc-release` | MSVC, on Windows, without Studio |
 | `clang-asan` | Clang, debug, with AddressSanitizer and UndefinedBehaviorSanitizer |
 | `clang-tsan` | Clang, debug, with ThreadSanitizer |
 | `clang-rtsan` | Clang, debug, with RealtimeSanitizer |
@@ -57,9 +64,26 @@ settings, such as `VCPKG_ROOT` or a compiler under another name, belong in a
 `CMakeUserPresets.json`, which git ignores.
 
 Each part beside libirama has a switch, on by default, that also asks vcpkg for that part's
-dependencies: `IRAMA_BUILD_CLI` and `IRAMA_BUILD_TESTS`. With every switch off, as in
-`gcc-libirama`, only libirama and its own dependencies are built. A project that adds Irama as a
+dependencies: `IRAMA_BUILD_CLI`, `IRAMA_BUILD_STUDIO` and `IRAMA_BUILD_TESTS`. With every switch
+off, as in `gcc-libirama`, only libirama and its own dependencies are built. The `msvc-*` presets
+turn `IRAMA_BUILD_STUDIO` off, since Studio is built on Linux only. A project that adds Irama as a
 subproject gets the same, since the switches are off there by default.
+
+A build with Studio writes it to `build/<preset>/studio/irama-studio`. It starts with the
+Instrument and Audio windows docked side by side, and remembers its window and layout in
+`$XDG_CONFIG_HOME/irama/`, or `~/.config/irama/`. It takes two options: `--config-dir <directory>`
+keeps the settings in another directory, for a clean start, and `--exit-after-frames <count>`, for
+tests, quits after drawing that many frames.
+
+Studio plays through PulseAudio, which PipeWire serves too, or through ALSA where there is no
+PulseAudio server, and runs silent where neither works. The Audio window picks the device, the
+system default unless another is chosen, and the buffer size, 256 frames unless another is chosen.
+A device that stops playing, such as a USB device unplugged, gives way to the system default, and
+where that fails too, the Audio window's Reopen button tries again. The computer
+keyboard is a piano of two rows: `Z` to `/` from C of the keyboard octave, and `Q` to `P` from the
+octave above, by the keys' positions on a US keyboard, so every layout plays the same. Numpad `/`
+and `*`, or the buttons in the status bar, lower and raise the octave, from 0 to 8, so that at the
+default of 4, `Z` plays C-4.
 
 `IRAMA_REALTIME_GUARD` compiles in the real-time guard, which stops the program when code inside a
 render call allocates or frees memory. It is off by default, and on in the three `*-debug` presets
@@ -70,10 +94,13 @@ and `tidy`.
 The tests run with each workflow preset, or alone with `ctest --preset <preset>`. Every test carries
 one CTest label: `abort`, for the checks that end the program, which run through
 `cmake/expect_abort.cmake`; `golden`, for the golden cases, which compare what irama-cli writes with
-a stored WAV file; or `unit`, for Catch2 test cases and the other checks run through CMake. Each
-test's name begins with what it tests: a libirama component such as `base` or `capi`, `cli` for
-irama-cli, `golden` for a golden case, `golden harness` for the checks of the golden tests
-themselves, or `build` for the configuration itself.
+a stored WAV file; `smoke`, for the test that starts Studio with no display, under SDL's `offscreen`
+video driver, and checks that it quits cleanly after 300 frames; or `unit`, for Catch2 test cases
+and the other checks run through CMake. Each test's name begins with what it tests: a libirama
+component such as `base` or `capi`, `cli` for irama-cli, `studio` for Studio, `golden` for a golden
+case, `golden harness` for the checks of the golden tests themselves, or `build` for the
+configuration itself. The `clang-tsan` test preset leaves out the `smoke` test, since SDL3 and the
+Vulkan driver aren't built with ThreadSanitizer.
 
 `IRAMA_UPDATE_GOLDENS=1 ctest --preset gcc-release -L golden` writes the goldens. Listen to each
 new or changed golden before committing it. [`CODING_STANDARDS.md`](CODING_STANDARDS.md) has the
@@ -93,7 +120,8 @@ twice a week:
 
 - Each Linux preset runs as its own job, `cmake --workflow --preset <preset>`, in the image built
   from `ci/linux/`: Docker's official GCC 16 image, with Clang 23 from apt.llvm.org pointed at
-  GCC 16's libstdc++, CMake 4.4 and Doxygen 1.18. The image is public, as
+  GCC 16's libstdc++, CMake 4.4, Doxygen 1.18, the packages SDL3 needs for its Wayland and X11
+  video drivers, and lavapipe, Mesa's Vulkan driver on the CPU, for Studio's smoke test. The image is public, as
   `ghcr.io/takumu-dev/irama-ci`, tagged with the hash that `ci/image-tag.sh` prints, so CI's
   compilers and checks are one `docker pull` away.
 - `clang-tsan` runs the same image on a CircleCI machine rather than in its Docker executor. The
@@ -132,10 +160,12 @@ Some settings live outside the repository:
 
 The repository follows [REUSE](https://reuse.software): every file names its copyright holder and
 licence, in its first lines or in `REUSE.toml`, and the licence texts are in `LICENSES/`.
-Everything under `cli/` is GPL-3.0-or-later. Everything else, libirama, the tests and the build
+Everything under `cli/` and `studio/` is GPL-3.0-or-later. The overlay of vcpkg's `imgui` port,
+in `ports/imgui/`, keeps vcpkg's MIT licence. Everything else, libirama, the tests and the build
 files included, is zlib.
 
 Every configuration checks the licences of the dependencies vcpkg installed, against the
 allowlists in `cmake/licenses.json`: a strict one for libirama, and a wider one for everything else.
-[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) holds the notices of the libraries irama-cli
-ships. Build the `notices` target of any preset that builds irama-cli to bring it up to date.
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) holds the notices of the libraries that irama-cli
+and Studio ship, and ships beside them. Build the `notices` target of any preset that builds both to
+bring it up to date.

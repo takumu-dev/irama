@@ -28,3 +28,11 @@ SPDX-License-Identifier = "Zlib"
 path = ["tests/golden/*.wav"]
 SPDX-FileCopyrightText = "2026 takumu-dev"
 SPDX-License-Identifier = "Zlib"
+
+# The overlay of vcpkg's own imgui port, which keeps its files as vcpkg has them but for the
+# dependencies its vcpkg.json names.
+[[annotations]]
+path = ["ports/imgui/**"]
+precedence = "override"
+SPDX-FileCopyrightText = ["Microsoft Corporation", "2026 takumu-dev"]
+SPDX-License-Identifier = "MIT"

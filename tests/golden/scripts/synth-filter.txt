@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: 2026 takumu-dev
+# SPDX-License-Identifier: Zlib
+
+# A saw through each filter mode at 12 and then 24 dB, 2000 frames each, with some resonance and
+# the cutoff stepping up and back down every 1000 frames, so that its 20 ms glides join into one
+# sweep. Each change of mode or slope crossfades over 5 ms. Then a short release.
+at 0      set-parameter 1003 60     # resonance
+at 0      set-parameter 1002 300    # cutoff
+at 0      set-parameter 3003 0.05   # release
+at 0      note-on C-3 0.8           # low-pass, 12 dB
+at 1000   set-parameter 1002 450
+at 2000   set-parameter 1001 1      # low-pass, 24 dB
+at 2000   set-parameter 1002 700
+at 3000   set-parameter 1002 1000
+at 4000   set-parameter 1000 1      # high-pass, 12 dB
+at 4000   set-parameter 1001 0
+at 4000   set-parameter 1002 1500
+at 5000   set-parameter 1002 2300
+at 6000   set-parameter 1001 1      # high-pass, 24 dB
+at 6000   set-parameter 1002 3500
+at 7000   set-parameter 1002 5000
+at 8000   set-parameter 1000 2      # band-pass, 12 dB
+at 8000   set-parameter 1001 0
+at 8000   set-parameter 1002 7500
+at 9000   set-parameter 1002 5000
+at 10000  set-parameter 1001 1      # band-pass, 24 dB
+at 10000  set-parameter 1002 3500
+at 11000  set-parameter 1002 2300
+at 12000  set-parameter 1000 3      # notch, 12 dB
+at 12000  set-parameter 1001 0
+at 12000  set-parameter 1002 1500
+at 13000  set-parameter 1002 1000
+at 14000  set-parameter 1001 1      # notch, 24 dB
+at 14000  set-parameter 1002 700
+at 15000  set-parameter 1002 450
+at 16000  release-all

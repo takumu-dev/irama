@@ -4,11 +4,41 @@
   "description": "A music tracker with built-in synthesisers, and the library that plays its songs",
   "homepage": "https://github.com/takumu-dev/irama",
   "license": "Zlib AND GPL-3.0-or-later",
-  "builtin-baseline": "bf19794383e8fb95eba5aa553235bc8ec2271688",
+  "builtin-baseline": "8fbc7fde20b38405e194be2956132e50a642790d",
   "dependencies": [],
   "features": {
     "cli": {
       "description": "What irama-cli needs"
+    },
+    "studio": {
+      "description": "What Irama Studio needs",
+      "dependencies": [
+        {
+          "name": "imgui",
+          "features": [
+            "docking-experimental",
+            "sdl3-binding",
+            "sdlgpu3-binding"
+          ]
+        },
+        "inter",
+        "miniaudio",
+        {
+          "name": "sdl3",
+          "default-features": false,
+          "features": [
+            "vulkan",
+            {
+              "name": "wayland",
+              "platform": "linux"
+            },
+            {
+              "name": "x11",
+              "platform": "linux"
+            }
+          ]
+        }
+      ]
     },
     "tests": {
       "description": "What the tests need, and nothing that ships",

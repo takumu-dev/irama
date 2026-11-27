@@ -29,7 +29,7 @@ Checks:
   - -readability-redundant-member-init
 WarningsAsErrors: '*'
 # The project's own headers. Third-party headers come in as system headers, which are never checked.
-HeaderFilterRegex: '/(libirama|cli|tests)/'
+HeaderFilterRegex: '/(libirama|cli|studio|tests)/'
 # irama.h is C, held to the rules beside it, which clang-tidy reads only for the file it is run on,
 # never for a header that file includes. So it is skipped here and checked on its own, as
 # cmake/IramaLint.cmake does.
@@ -65,4 +65,7 @@ CheckOptions:
   readability-identifier-naming.IgnoreMainLikeFunctions: true
   # A plain struct, its fields all public, may still have member functions such as operators.
   misc-non-private-member-variables-in-classes.IgnoreClassesWithAllMemberVariablesBeingPublic: true
+  # The standard's maps insert on a missing key, as the check's default says, and OwnedArray checks
+  # its own index where NDEBUG isn't defined.
+  cppcoreguidelines-pro-bounds-avoid-unchecked-container-access.ExcludeClasses: '::std::map;::std::unordered_map;::std::flat_map;::irama::OwnedArray'
 ...

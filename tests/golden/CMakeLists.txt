@@ -80,4 +80,19 @@ endfunction()
 
 irama_add_golden_test(tone ARGS tone)
 
+# The synth's goldens, each played from a script in scripts/.
+set(scripts "${CMAKE_CURRENT_SOURCE_DIR}/scripts")
+irama_add_golden_test(synth-waveforms
+    ARGS synth --script "${scripts}/synth-waveforms.txt" --seconds 0.7
+)
+irama_add_golden_test(synth-filter
+    ARGS synth --script "${scripts}/synth-filter.txt" --seconds 0.4
+)
+irama_add_golden_test(synth-envelope
+    ARGS synth --script "${scripts}/synth-envelope.txt" --seconds 0.4
+)
+irama_add_golden_test(synth-chord
+    ARGS synth --script "${scripts}/synth-chord.txt" --seconds 0.5
+)
+
 add_subdirectory(harness)

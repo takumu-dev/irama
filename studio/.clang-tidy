@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: 2026 takumu-dev
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+---
+# The root's checks, less one. Dear ImGui's printf-style functions, such as ImGui::Text, are
+# variadic, and each carries IM_FMTARGS, so GCC and Clang check its format against its arguments as
+# they would printf's.
+InheritParentConfig: true
+Checks:
+  - -cppcoreguidelines-pro-type-vararg
+...

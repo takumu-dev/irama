@@ -3,10 +3,12 @@
 
 # Irama's tests. Each one carries exactly one CTest label: `abort` for the checks that end the
 # program, run through cmake/expect_abort.cmake, `golden` for the golden cases, run through
-# cmake/golden_test.cmake, and `unit` for Catch2 test cases and the other checks run through CMake.
+# cmake/golden_test.cmake, `smoke` for the test that starts Irama Studio, run through
+# cmake/smoke_test.cmake, and `unit` for Catch2 test cases and the other checks run through CMake.
 # Each test's name begins with the component it tests, matching the tag on its Catch2 test case, or
-# with the part it tests: `build` for the configuration, `cli` for irama-cli, `golden` for a golden
-# case and `golden harness` for the golden tests' own checks.
+# with the part it tests: `build` for the configuration, `cli` for irama-cli, `studio` for Irama
+# Studio, `golden` for a golden case, `golden harness` for the golden tests' own checks and
+# `test support` for the measurements the tests share.
 
 find_package(Catch2 3 CONFIG REQUIRED)
 include(Catch)
@@ -37,11 +39,21 @@ endfunction()
 
 add_subdirectory(abort)
 add_subdirectory(cmake)
+add_subdirectory(support)
 add_subdirectory(unit/base)
 add_subdirectory(unit/capi)
+add_subdirectory(unit/filter)
+add_subdirectory(unit/param)
+add_subdirectory(unit/player)
+add_subdirectory(unit/source)
+add_subdirectory(unit/voice)
 add_subdirectory(unit/wav)
 
 if(IRAMA_BUILD_CLI)
     add_subdirectory(cli)
     add_subdirectory(golden)
+endif()
+
+if(IRAMA_BUILD_STUDIO)
+    add_subdirectory(studio)
 endif()

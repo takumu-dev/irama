@@ -12,11 +12,13 @@
 #undef NDEBUG
 #endif
 
+#include <irama/engine/base/allocator.hpp>
 #include <irama/engine/base/assertion.hpp>
 #include <irama/engine/base/narrow.hpp>
 #include <irama/engine/base/nonblocking.hpp>
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <span>
@@ -43,6 +45,31 @@ void narrow_too_large(int sides) { static_cast<void>(irama::narrow<std::uint8_t>
 
 void narrow_negative(int sides) { static_cast<void>(irama::narrow<unsigned>(-sides)); }
 
+// A triangle's sides less three is no bytes at all, and three is no alignment.
+void allocate_nothing(int sides) {
+    void* block = irama::allocate(irama::default_allocator(), irama::narrow<std::size_t>(sides - 3),
+                                  alignof(int));
+    irama::deallocate(irama::default_allocator(), block, sizeof(int), alignof(int));
+}
+
+void allocate_misaligned(int sides) {
+    void* block =
+        irama::allocate(irama::default_allocator(), sizeof(int), irama::narrow<std::size_t>(sides));
+    irama::deallocate(irama::default_allocator(), block, sizeof(int), alignof(int));
+}
+
+void free_nothing(int sides) {
+    void* block = irama::allocate(irama::default_allocator(), sizeof(int), alignof(int));
+    irama::deallocate(irama::default_allocator(), block, irama::narrow<std::size_t>(sides - 3),
+                      alignof(int));
+}
+
+void free_misaligned(int sides) {
+    void* block = irama::allocate(irama::default_allocator(), sizeof(int), alignof(int));
+    irama::deallocate(irama::default_allocator(), block, sizeof(int),
+                      irama::narrow<std::size_t>(sides));
+}
+
 struct NamedCheck {
     std::string_view name;
     Check check = nullptr;
@@ -54,6 +81,10 @@ constexpr std::array checks{
     NamedCheck{.name = "nonblocking", .check = fail_nonblocking},
     NamedCheck{.name = "narrow-too-large", .check = narrow_too_large},
     NamedCheck{.name = "narrow-negative", .check = narrow_negative},
+    NamedCheck{.name = "allocate-nothing", .check = allocate_nothing},
+    NamedCheck{.name = "allocate-misaligned", .check = allocate_misaligned},
+    NamedCheck{.name = "free-nothing", .check = free_nothing},
+    NamedCheck{.name = "free-misaligned", .check = free_misaligned},
 };
 
 int run(std::string_view name) {

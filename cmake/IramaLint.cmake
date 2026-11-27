@@ -45,7 +45,7 @@ irama_find_llvm_tool(IRAMA_CLANG_FORMAT clang-format)
 if(IRAMA_CLANG_FORMAT)
     block()
         set(sources "")
-        foreach(part IN ITEMS cli libirama tests)
+        foreach(part IN ITEMS cli libirama studio tests)
             file(GLOB_RECURSE part_sources CONFIGURE_DEPENDS
                 "${PROJECT_SOURCE_DIR}/${part}/*.c"
                 "${PROJECT_SOURCE_DIR}/${part}/*.h"
