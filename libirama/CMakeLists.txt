@@ -12,6 +12,7 @@ add_subdirectory(src/capi)
 add_subdirectory(src/wav)
 add_subdirectory(src/param)
 add_subdirectory(src/source)
+add_subdirectory(src/filter)
 add_subdirectory(src/voice)
 add_subdirectory(src/player)
 

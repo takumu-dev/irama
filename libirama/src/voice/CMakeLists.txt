@@ -12,5 +12,5 @@ irama_add_component(voice
         adsr.cpp
         instrument.cpp
         voice.cpp
-    DEPENDS source param base
+    DEPENDS source filter param base
 )

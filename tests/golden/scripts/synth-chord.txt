@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: 2026 takumu-dev
+# SPDX-License-Identifier: Zlib
+
+# Four overlapping notes of the default sound, each softer than the one before, released one by
+# one.
+at 0      note-on C-4 1
+at 2400   note-on E-4 0.75
+at 4800   note-on G-4 0.5
+at 7200   note-on B-4 0.25
+at 10800  note-off C-4
+at 11400  note-off E-4
+at 12000  note-off G-4
+at 12600  note-off B-4
