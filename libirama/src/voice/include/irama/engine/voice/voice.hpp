@@ -8,6 +8,7 @@
 
 #include <irama/engine/base/nonblocking.hpp>
 #include <irama/engine/base/pcg32.hpp>
+#include <irama/engine/filter/svf.hpp>
 #include <irama/engine/source/noise.hpp>
 #include <irama/engine/source/oscillator.hpp>
 #include <irama/engine/voice/adsr.hpp>
@@ -22,18 +23,22 @@ namespace irama {
 /// One note, sounding from its note-on until its release ends.
 ///
 /// A voice is the basic source, an `Oscillator` at the note's frequency tuned by the coarse and
-/// fine offsets, at the oscillator's level, plus `Noise` at the noise's level, shaped by an `Adsr`,
-/// through the amplifier: the instrument's gain and pan on each channel, and the gain of the note's
-/// velocity. It reads the instrument's values as they are when it needs them: the velocity's gain,
-/// the waveform and the attack's settings when it starts, each later segment's settings when that
-/// segment starts, and the source's values, the sustain level and the amplifier's gains every
-/// frame. A voice is free until it starts, and free again on the frame after its release ends.
+/// fine offsets, at the oscillator's level, plus `Noise` at the noise's level, through an `Svf` in
+/// the instrument's filter mode and slope, shaped by an `Adsr`, through the amplifier: the
+/// instrument's gain and pan on each channel, and the gain of the note's velocity. It reads the
+/// instrument's values as they are when it needs them: the velocity's gain, the waveform, the
+/// filter's mode and slope and the attack's settings when it starts, each later segment's settings
+/// when that segment starts, and the source's values, the filter's coefficients, the sustain level
+/// and the amplifier's gains every frame. A voice is free until it starts, and free again on the
+/// frame after its release ends. It starts its filter from silence.
 ///
-/// A change of waveform while the voice sounds crossfades linearly over 5 ms, rounded to the
-/// nearest whole number of frames: the voice plays the old waveform and the new one from the same
-/// phase, and frame `i`, counting from 0, of `n` is `(i + 1) / n` of the new one, so the last frame
-/// is the new waveform alone. A change during a crossfade starts a new one, from the waveform that
-/// was fading in. A coarse step is a jump in pitch with a continuous phase, and doesn't crossfade.
+/// A change of waveform, filter mode or filter slope while the voice sounds crossfades linearly
+/// over 5 ms, rounded to the nearest whole number of frames: the voice plays its old configuration
+/// on a copy of its oscillator and filter, beside the new one on its own, from the same phase and
+/// the same filter state, and frame `i`, counting from 0, of `n` is `(i + 1) / n` of the new one,
+/// so the last frame is the new configuration alone. A change during a crossfade starts a new one,
+/// from the configuration that was fading in. A coarse step is a jump in pitch with a continuous
+/// phase, and doesn't crossfade.
 ///
 /// A stolen voice fades out linearly over 5 ms, rounded to the nearest whole number of frames, from
 /// wherever its envelope is: frame `i`, counting from 0, of `n` is at `1 − (i + 1) / n` of the
@@ -44,7 +49,7 @@ class Voice {
     /// How many floats of scratch `render()` needs for each frame.
     static constexpr std::size_t scratch_per_frame = 3;
 
-    /// How long a crossfade between waveforms lasts, in seconds.
+    /// How long a crossfade between configurations lasts, in seconds.
     static constexpr float crossfade_seconds = 0.005F;
 
     /// How long a stolen voice's fade lasts, in seconds.
@@ -107,17 +112,23 @@ class Voice {
     [[nodiscard]] int note() const;
 
   private:
-    // Plays the next frames of the source, at the oscillator's and the noise's levels, into
-    // `wave`, using `frequencies` and `other` for its working.
-    void render_source(std::span<float> wave, std::span<float> frequencies, std::span<float> other,
+    // One configuration of the voice's oscillator and filter, with the state each has reached.
+    struct Chain {
+        Oscillator oscillator;
+        Waveform waveform = Waveform::saw;
+        Svf filter;
+        FilterMode filter_mode = FilterMode::low_pass;
+        FilterSlope filter_slope = FilterSlope::db12;
+    };
+
+    // Plays the next frames of the source through the filter into `wave`, crossfading from the
+    // old configuration if one is fading out, using `other` and `third` for its working.
+    void render_chains(std::span<float> wave, std::span<float> other, std::span<float> third,
                        const InstrumentBlock& block) IRAMA_NONBLOCKING;
 
-    Oscillator oscillator_;
-    Waveform waveform_ = Waveform::saw;
-    // The oscillator a crossfade fades out, a copy of the voice's own at the change, which plays
-    // the old waveform from the same phase.
-    Oscillator fading_;
-    Waveform fading_waveform_ = Waveform::saw;
+    Chain chain_;
+    // The configuration a crossfade fades out, a copy of the voice's own at the change.
+    Chain fading_;
     // How long a crossfade lasts in frames, and how many frames of the current one have been
     // played, which is as long when there is none.
     std::uint32_t crossfade_frames_ = 1;

@@ -40,7 +40,8 @@ exceptions or RTTI.
 | `wav` | The WAV writer, which irama-cli and the tests share. | `base` |
 | `param` | Parameters: the descriptor that says what each one is, its scale conversions, and the smoother that glides it to each new value. | `base` |
 | `source` | The basic source a voice plays, the band-limited oscillator and the noise, and the tuning that gives each note its frequency. | `base` |
-| `voice` | A voice, one sounding note, the ADSR envelope that shapes it, how a player chooses and steals voices, and the instrument: its parameter table, and the values every voice reads from it. | `source`, `param`, `base` |
+| `filter` | The state variable filter a voice plays its source through. | `base` |
+| `voice` | A voice, one sounding note, the ADSR envelope that shapes it, how a player chooses and steals voices, and the instrument: its parameter table, and the values every voice reads from it. | `source`, `filter`, `param`, `base` |
 | `player` | `irama::Player`, the object a host renders, which owns the instrument, the voices and the queue of control messages. | `voice`, `param`, `base` |
 
 `irama::engine` links every component but `capi`. Nothing links `capi`: it sits on top of the other
@@ -200,33 +201,37 @@ instrument can render several parameters for one block.
 `irama::InstrumentParam`. IDs fall in decimal blocks: the filter at 1000, the amplifier at 2000,
 the amplifier's envelope at 3000, and the subtractive source at 10000, whose oscillator `n` starts at
 `10000 + 10 · (n − 1)` and whose noise is at 10090. The table holds every parameter of the basic
-synth. The voice reads the source's, the amplifier's and the envelope's, and the filter's are held
-and smoothed like the rest. Continuous parameters heard while a note sounds glide over 20 ms. Stepped parameters, and those read
+synth. Continuous parameters heard while a note sounds glide over 20 ms. Stepped parameters, and those read
 only when a note or a segment starts, such as the envelope's times and curves and the velocity
 sensitivity, switch at their frame.
 
 `irama::Instrument` holds a smoother for each parameter, at the same index as in the table, and
 advances them every frame, whether a voice reads them or not, so there is one ramp for each
 parameter, shared by every voice. For each block it computes what every voice reads, once: the
-sustain level of each frame, the gain of each frame on each channel, and the source's values: the
+sustain level of each frame, the gain of each frame on each channel, the source's values: the
 waveform, which holds for the block, and the oscillator's level, the pulse width, the noise's level
-and the tuning of each frame, the ratio `2^((coarse + fine / 100) / 12)`. The gain is in decibels,
+and the tuning of each frame, the ratio `2^((coarse + fine / 100) / 12)`; and the filter's: its mode
+and slope, which hold for the block, and its coefficients of each frame, `g = tan(π·fc/fs)` and the
+values derived from it, computed from the smoothed cutoff and resonance. The gain is in decibels,
 and the pan is constant-power, `sin(π/2 − θ)` on the left and `sin θ` on the right, with θ from 0 at
 −1 to π/2 at +1, so a centred voice is 3 dB down on each side, the same on both to the bit.
 
-`irama::Voice` plays the basic source, shaped by an `irama::Adsr`, through the amplifier: an
-`irama::Oscillator` at the note's frequency from `irama::note_frequency()` times the tuning, at the
-oscillator's level, plus `irama::Noise` at the noise's level. It reads the instrument as it is when
-it needs a value: the velocity's gain, `1 − s · (1 − v²)` for the sensitivity `s`, and the
-waveform when it starts; each segment's time and curve when that segment starts; and the source's
-values, the sustain level and the channels' gains every frame. The tuning is twelve-tone equal
-temperament with A-4, note 57, at 440 Hz. A change of waveform while a voice sounds crossfades
-linearly over 5 ms, rounded to whole frames: the voice copies its oscillator, plays the old waveform
-on the copy and the new one on its own, from the same phase, and frame `i` of `n` is `(i + 1) / n`
-of the new one. A change during a crossfade starts a new one from the waveform fading in. A coarse
-step is a jump in pitch with a continuous phase, and doesn't crossfade. A voice that `fade_out()` starts
-fading, as a stolen one does, multiplies its envelope's levels by the fade's, and is free on the
-frame after the fade's last, or after its release ends, if that comes first.
+`irama::Voice` plays the basic source through an `irama::Svf`, shaped by an `irama::Adsr`, through
+the amplifier: an `irama::Oscillator` at the note's frequency from `irama::note_frequency()` times
+the tuning, at the oscillator's level, plus `irama::Noise` at the noise's level. It reads the
+instrument as it is when it needs a value: the velocity's gain, `1 − s · (1 − v²)` for the
+sensitivity `s`, the waveform and the filter's mode and slope when it starts; each segment's time
+and curve when that segment starts; and the source's values, the filter's coefficients, the sustain
+level and the channels' gains every frame. It clears its filter's state when it starts. The tuning
+is twelve-tone equal temperament with A-4, note 57, at 440 Hz. A change of waveform, filter mode or
+filter slope while a voice sounds crossfades linearly over 5 ms, rounded to whole frames: the voice
+copies its oscillator and its filter, plays the old configuration on the copies and the new one on
+its own, from the same phase and the same filter state, and frame `i` of `n` is `(i + 1) / n` of
+the new one. Both hear the same noise. A change during a crossfade starts a new one from the
+configuration fading in. A coarse step is a jump in pitch with a continuous phase, and doesn't
+crossfade. A voice that `fade_out()` starts fading, as a stolen one does, multiplies its envelope's
+levels by the fade's, and is free on the frame after the fade's last, or after its release ends, if
+that comes first.
 
 The oscillator plays a sine, a triangle, a saw or a pulse from one `float` phase in [0, 1), which
 moves on by the frequency over the sample rate each sample. Each waveform's fundamental is in phase
@@ -241,6 +246,22 @@ fundamental, for the saw, the pulse at 50 % and 10 % and the triangle at 110, 44
 with a 65,536-point seven-term Blackman-Harris-windowed FFT. Each limit is the first measurement
 plus 3 dB, and is at least 20 dB below the naive waveform's at the same note. The noise is uniform,
 each sample the top 24 bits of its generator's next output, scaled to [−1, 1).
+
+The filter is Zavalishin's linear state variable filter in the topology-preserving transform, with
+trapezoidal integrators, so its response is the analogue one's under the bilinear transform
+prewarped at the cutoff. It has low-pass, high-pass, band-pass and notch modes, the band-pass
+normalised to a gain of 1 at the cutoff, and slopes of 12 and 24 dB per octave. The 24 dB slope is
+two stages in series in the same mode at the same cutoff: the first Butterworth-damped, with Q =
+1/√2, and only the second carrying the resonance, so there is one resonant peak. The 12 dB slope is
+the resonant stage alone, and the other stage holds no state while it plays. The resonance `r`, from
+0 to 1, gives `Q = 0.5 · 50^r`, from 0.5 to 25, so the filter never self-oscillates, and the cutoff
+is held at most at 0.45 of the sample rate. The default sound is the low-pass at 12 dB, open at
+20 kHz with no resonance. At the end of each block the filter sets any state below 1e-20 in
+magnitude to 0, on every target and whatever the floating-point environment, so a filter ringing
+into silence settles to exact zeros rather than denormals. The filter's test checks every mode at
+both slopes, at cutoffs from 100 Hz to 15 kHz and resonances of 0 and 1, against the analytic
+response within 0.1 dB below 0.4 of the sample rate, wherever it is above −60 dB, from the FFT of
+the impulse response.
 
 Each segment of the ADSR lasts exactly its time, rounded to a whole number of frames. Its `i`th
 frame, counting from 0, of `n` is at progress `p = (i + 1) / n`, and moves from the segment's start
@@ -296,7 +317,11 @@ the script and the compare tool on goldens wrong in each way, and show that each
 The synth's goldens play scripts from `tests/golden/scripts/` through `irama-cli synth`, at the
 player's default seed. `synth-waveforms` plays one note through the sine, the triangle, the saw and
 the pulse, a tenth of a second each, so it records the crossfades between them, then the noise
-alone, and the release.
+alone, and the release. `synth-filter` plays a saw through each filter mode at both slopes, with
+resonance and a cutoff sweeping up and back down, so it records the crossfades between modes and
+slopes too. `synth-envelope` holds one note at its sustain, then releases it to the exact frame its
+release ends. `synth-chord` plays four overlapping notes of the default sound at different
+velocities.
 
 `irama_test_support`, in `tests/support/`, is what the tests measure audio with: a radix-2 FFT in
 double precision, checked against a direct DFT, the seven-term Blackman-Harris window, and the

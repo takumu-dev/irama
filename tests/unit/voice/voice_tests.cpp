@@ -6,12 +6,14 @@
 #include <irama/engine/base/nonblocking.hpp>
 #include <irama/engine/base/pcg32.hpp>
 #include <irama/engine/base/render_scope.hpp>
+#include <irama/engine/filter/svf.hpp>
 #include <irama/engine/param/param_descriptor.hpp>
 #include <irama/engine/param/param_id.hpp>
 #include <irama/engine/source/noise.hpp>
 #include <irama/engine/source/oscillator.hpp>
 #include <irama/engine/voice/instrument.hpp>
 
+#include <catch2/catch_message.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers.hpp>
@@ -19,6 +21,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <cstddef>
 #include <numbers>
 #include <ranges>
@@ -118,21 +121,66 @@ void require_faded(std::span<const float> out, std::span<const float> unfaded, s
     }
 }
 
+// A stepped change to one of the instrument's parameters.
+struct Change {
+    irama::ParamId id;
+    float value = 0.0F;
+};
+
+// Sets one of the instrument's parameters, at once.
+void set(irama::Instrument& instrument, irama::ParamId id, float value) {
+    instrument.set(index_of(id), value, false);
+}
+
 // −12 dB, less 3 dB for the centre of a constant-power pan, at the sustain level.
 const double sustain_gain = std::pow(10.0, -12.0 / 20.0) * std::cos(std::numbers::pi / 4.0) * 0.7;
 
+// The default filter's response at a frequency at 48 kHz: a 12 dB low-pass at 20 kHz with a Q of
+// 0.5, under the bilinear transform prewarped at its cutoff.
+[[nodiscard]] std::complex<double> default_filter(double frequency) {
+    const std::complex<double> s{0.0, std::tan(std::numbers::pi * frequency / 48'000.0) /
+                                          std::tan(std::numbers::pi * 20'000.0 / 48'000.0)};
+    return 1.0 / ((s * s) + (2.0 * s) + 1.0);
+}
+
+// Requires that `out` crossfades linearly from `old_out` to `new_out` over exactly `crossfade`
+// frames: frame i, counting from 0, is (i + 1) / n of the way to the new, so its last frame is the
+// new alone, and the new alone follows.
+void require_crossfade(const std::vector<float>& out, const std::vector<float>& old_out,
+                       const std::vector<float>& new_out, std::size_t crossfade) {
+    for (std::size_t frame = 0; frame < crossfade; ++frame) {
+        const double progress = static_cast<double>(frame + 1) / static_cast<double>(crossfade);
+        for (std::size_t index = 2 * frame; index < (2 * frame) + 2; ++index) {
+            const double expected = ((1.0 - progress) * static_cast<double>(old_out.at(index))) +
+                                    (progress * static_cast<double>(new_out.at(index)));
+            REQUIRE_THAT(out.at(index), WithinAbs(expected, 1e-6));
+        }
+    }
+    REQUIRE(out.at(2 * (crossfade - 2)) != new_out.at(2 * (crossfade - 2)));
+    REQUIRE(std::ranges::equal(std::span{out}.subspan(2 * (crossfade - 1)),
+                               std::span{new_out}.subspan(2 * (crossfade - 1))));
+}
+
+// A sine of a gain and a frequency at a phase in cycles, once the default filter has settled on it.
+[[nodiscard]] double filtered_sine(double gain, double frequency, double phase) {
+    const std::complex<double> response = default_filter(frequency);
+    return gain * std::abs(response) *
+           std::sin((2.0 * std::numbers::pi * phase) + std::arg(response));
+}
+
 } // namespace
 
-TEST_CASE("a voice sounds its note's sine at -15 dB on each channel at full velocity", "[voice]") {
+TEST_CASE("a voice sounds its note's sine at -15 dB on each channel at full velocity, through the "
+          "default filter",
+          "[voice]") {
     auto instrument = instrument_playing(irama::Waveform::sine, rate);
     irama::Voice voice;
     voice.start(57, 1.0F, instrument, irama::Pcg32{});
     const auto out = render(voice, instrument, attack_and_decay_frames + 480);
 
-    const double gain = sustain_gain;
     for (std::size_t frame = attack_and_decay_frames; frame < out.size() / 2; ++frame) {
         const double expected =
-            gain * std::sin(2.0 * std::numbers::pi * 440.0 * static_cast<double>(frame) / 48'000.0);
+            filtered_sine(sustain_gain, 440.0, 440.0 * static_cast<double>(frame) / 48'000.0);
         REQUIRE_THAT(out.at(2 * frame), WithinAbs(expected, 1e-4));
         REQUIRE(out.at((2 * frame) + 1) == out.at(2 * frame));
     }
@@ -186,9 +234,9 @@ TEST_CASE("a voice follows the instrument's sustain level and pan while it sound
     const auto out = render(voice, instrument, 480);
     const double gain = std::pow(10.0, -12.0 / 20.0) * 0.35;
     for (std::size_t frame = 0; frame < out.size() / 2; ++frame) {
-        const double expected =
-            gain * std::sin(2.0 * std::numbers::pi * 440.0 *
-                            static_cast<double>(attack_and_decay_frames + 960 + frame) / 48'000.0);
+        const double expected = filtered_sine(
+            gain, 440.0,
+            440.0 * static_cast<double>(attack_and_decay_frames + 960 + frame) / 48'000.0);
         REQUIRE_THAT(out.at(2 * frame), WithinAbs(expected, 1e-4));
         REQUIRE(out.at((2 * frame) + 1) == 0.0F);
     }
@@ -213,75 +261,140 @@ TEST_CASE("a voice is held until it is released, and free once its release ends"
     REQUIRE(render(voice, instrument, 100) == std::vector<float>(200, 0.0F));
 }
 
-TEST_CASE("a waveform change crossfades linearly over exactly 5 ms", "[voice]") {
+TEST_CASE("a waveform, filter mode or filter slope change crossfades linearly over exactly 5 ms",
+          "[voice]") {
+    struct Case {
+        const char* name;
+        std::vector<Change> from;
+        std::vector<Change> to;
+    };
+
+    const Case test_case = GENERATE(
+        Case{
+            .name = "sine to saw",
+            .from = {{irama::InstrumentParam::osc1_waveform, 0.0F}},
+            .to = {{irama::InstrumentParam::osc1_waveform, 2.0F}},
+        },
+        Case{
+            .name = "low-pass to high-pass",
+            .from = {},
+            .to = {{irama::InstrumentParam::filter_mode, 1.0F}},
+        },
+        Case{
+            .name = "12 dB to 24 dB",
+            .from = {},
+            .to = {{irama::InstrumentParam::filter_slope, 1.0F}},
+        },
+        Case{
+            .name = "24 dB to 12 dB",
+            .from = {{irama::InstrumentParam::filter_slope, 1.0F}},
+            .to = {{irama::InstrumentParam::filter_slope, 0.0F}},
+        },
+        Case{
+            .name = "notch at 12 dB to band-pass at 24 dB",
+            .from = {{irama::InstrumentParam::filter_mode, 3.0F}},
+            .to = {{irama::InstrumentParam::filter_mode, 2.0F},
+                   {irama::InstrumentParam::filter_slope, 1.0F}},
+        });
     const float sample_rate = GENERATE(48'000.0F, 44'100.0F);
+    CAPTURE(test_case.name, sample_rate);
     // 5 ms, rounded to the nearest frame.
     const std::size_t crossfade = sample_rate == 48'000.0F ? 240 : 221;
     constexpr std::size_t before = 1'000;
 
-    auto instrument = instrument_playing(irama::Waveform::sine, sample_rate);
-    auto sine_instrument = instrument_playing(irama::Waveform::sine, sample_rate);
-    auto saw_instrument = instrument_playing(irama::Waveform::saw, sample_rate);
-    irama::Voice voice;
-    irama::Voice sine;
-    irama::Voice saw;
-    voice.start(57, 1.0F, instrument, irama::Pcg32{});
-    sine.start(57, 1.0F, sine_instrument, irama::Pcg32{});
-    saw.start(57, 1.0F, saw_instrument, irama::Pcg32{});
-
-    const auto out_before = render(voice, instrument, before);
-    REQUIRE(out_before == render(sine, sine_instrument, before));
-    static_cast<void>(render(saw, saw_instrument, before));
-    set_waveform(instrument, irama::Waveform::saw);
-    const auto out = render(voice, instrument, crossfade + 100);
-    const auto old_out = render(sine, sine_instrument, crossfade + 100);
-    const auto new_out = render(saw, saw_instrument, crossfade + 100);
-
-    // Frame i of the crossfade, counting from 0, is (i + 1) / n of the way to the new waveform, so
-    // its last frame is the new waveform alone.
-    for (std::size_t frame = 0; frame < crossfade; ++frame) {
-        const double progress = static_cast<double>(frame + 1) / static_cast<double>(crossfade);
-        for (std::size_t channel = 0; channel < 2; ++channel) {
-            const std::size_t index = (2 * frame) + channel;
-            const double expected = ((1.0 - progress) * static_cast<double>(old_out.at(index))) +
-                                    (progress * static_cast<double>(new_out.at(index)));
-            REQUIRE_THAT(out.at(index), WithinAbs(expected, 1e-6));
+    // The voice changes at `before`, one voice never changes, and one has the change from the
+    // start. All three are silent until `before`, so that their oscillators are at the same phase
+    // and their filters hold nothing when the change comes, and then sound.
+    const auto make_instrument = [&](std::span<const Change> changes) {
+        irama::Instrument instrument{sample_rate};
+        set(instrument, irama::InstrumentParam::cutoff, 2'000.0F);
+        set(instrument, irama::InstrumentParam::resonance, 50.0F);
+        set(instrument, irama::InstrumentParam::osc1_level, 0.0F);
+        for (const Change& change : test_case.from) {
+            set(instrument, change.id, change.value);
         }
+        for (const Change& change : changes) {
+            set(instrument, change.id, change.value);
+        }
+        return instrument;
+    };
+    auto instrument = make_instrument({});
+    auto old_instrument = make_instrument({});
+    auto new_instrument = make_instrument(test_case.to);
+    irama::Voice voice;
+    irama::Voice old_voice;
+    irama::Voice new_voice;
+    voice.start(57, 1.0F, instrument, irama::Pcg32{});
+    old_voice.start(57, 1.0F, old_instrument, irama::Pcg32{});
+    new_voice.start(57, 1.0F, new_instrument, irama::Pcg32{});
+    REQUIRE(render(voice, instrument, before) == std::vector<float>(before * 2, 0.0F));
+    static_cast<void>(render(old_voice, old_instrument, before));
+    static_cast<void>(render(new_voice, new_instrument, before));
+
+    for (irama::Instrument* sounding : {&instrument, &old_instrument, &new_instrument}) {
+        set(*sounding, irama::InstrumentParam::osc1_level, 100.0F);
     }
-    REQUIRE(out.at(2 * (crossfade - 2)) != new_out.at(2 * (crossfade - 2)));
-    REQUIRE(std::ranges::equal(std::span{out}.subspan(2 * (crossfade - 1)),
-                               std::span{new_out}.subspan(2 * (crossfade - 1))));
+    for (const Change& change : test_case.to) {
+        set(instrument, change.id, change.value);
+    }
+    const auto out = render(voice, instrument, crossfade + 100);
+    const auto old_out = render(old_voice, old_instrument, crossfade + 100);
+    const auto new_out = render(new_voice, new_instrument, crossfade + 100);
+
+    require_crossfade(out, old_out, new_out, crossfade);
 }
 
-TEST_CASE("a waveform change during a crossfade crossfades again from the waveform fading in",
+TEST_CASE("a change during a crossfade crossfades again from the configuration fading in",
           "[voice]") {
-    auto instrument = instrument_playing(irama::Waveform::sine, rate);
-    auto saw_instrument = instrument_playing(irama::Waveform::saw, rate);
-    auto pulse_instrument = instrument_playing(irama::Waveform::pulse, rate);
+    // A filter's state is the same in every mode, so voices playing the same note in different
+    // modes stay alike but for their outputs.
+    const auto make_instrument = [](float mode) {
+        irama::Instrument instrument{rate};
+        set(instrument, irama::InstrumentParam::cutoff, 2'000.0F);
+        set(instrument, irama::InstrumentParam::filter_mode, mode);
+        return instrument;
+    };
+    auto instrument = make_instrument(0.0F);
+    auto high_pass_instrument = make_instrument(1.0F);
+    auto band_pass_instrument = make_instrument(2.0F);
     irama::Voice voice;
-    irama::Voice saw;
-    irama::Voice pulse;
+    irama::Voice high_pass;
+    irama::Voice band_pass;
     voice.start(57, 1.0F, instrument, irama::Pcg32{});
-    saw.start(57, 1.0F, saw_instrument, irama::Pcg32{});
-    pulse.start(57, 1.0F, pulse_instrument, irama::Pcg32{});
+    high_pass.start(57, 1.0F, high_pass_instrument, irama::Pcg32{});
+    band_pass.start(57, 1.0F, band_pass_instrument, irama::Pcg32{});
     static_cast<void>(render(voice, instrument, 1'000));
-    static_cast<void>(render(saw, saw_instrument, 1'100));
-    static_cast<void>(render(pulse, pulse_instrument, 1'100));
-    set_waveform(instrument, irama::Waveform::saw);
+    static_cast<void>(render(high_pass, high_pass_instrument, 1'100));
+    static_cast<void>(render(band_pass, band_pass_instrument, 1'100));
+    set(instrument, irama::InstrumentParam::filter_mode, 1.0F);
     static_cast<void>(render(voice, instrument, 100));
-    set_waveform(instrument, irama::Waveform::pulse);
+    set(instrument, irama::InstrumentParam::filter_mode, 2.0F);
 
     const auto out = render(voice, instrument, 300);
-    const auto saw_out = render(saw, saw_instrument, 300);
-    const auto pulse_out = render(pulse, pulse_instrument, 300);
-    for (std::size_t frame = 0; frame < 240; ++frame) {
-        const double progress = static_cast<double>(frame + 1) / 240.0;
-        const double expected = ((1.0 - progress) * static_cast<double>(saw_out.at(2 * frame))) +
-                                (progress * static_cast<double>(pulse_out.at(2 * frame)));
-        REQUIRE_THAT(out.at(2 * frame), WithinAbs(expected, 1e-6));
-    }
-    REQUIRE(std::ranges::equal(std::span{out}.subspan(std::size_t{2} * 239),
-                               std::span{pulse_out}.subspan(std::size_t{2} * 239)));
+    const auto high_pass_out = render(high_pass, high_pass_instrument, 300);
+    const auto band_pass_out = render(band_pass, band_pass_instrument, 300);
+    require_crossfade(out, high_pass_out, band_pass_out, 240);
+}
+
+TEST_CASE("a voice starts its filter from silence, in the instrument's mode and slope", "[voice]") {
+    irama::Instrument instrument{rate};
+    set(instrument, irama::InstrumentParam::cutoff, 500.0F);
+    set(instrument, irama::InstrumentParam::resonance, 90.0F);
+    irama::Voice voice;
+    voice.start(45, 1.0F, instrument, irama::Pcg32{});
+    static_cast<void>(render(voice, instrument, 1'000));
+
+    set(instrument, irama::InstrumentParam::filter_mode, 2.0F);
+    set(instrument, irama::InstrumentParam::filter_slope, 1.0F);
+    irama::Instrument twin_instrument{rate};
+    set(twin_instrument, irama::InstrumentParam::cutoff, 500.0F);
+    set(twin_instrument, irama::InstrumentParam::resonance, 90.0F);
+    set(twin_instrument, irama::InstrumentParam::filter_mode, 2.0F);
+    set(twin_instrument, irama::InstrumentParam::filter_slope, 1.0F);
+    irama::Voice twin;
+    voice.start(57, 1.0F, instrument, irama::Pcg32{});
+    twin.start(57, 1.0F, twin_instrument, irama::Pcg32{});
+    REQUIRE(render(voice, instrument, 1'000) == render(twin, twin_instrument, 1'000));
 }
 
 TEST_CASE("a voice started after a waveform change plays the new waveform with no crossfade",
@@ -296,7 +409,7 @@ TEST_CASE("a voice started after a waveform change plays the new waveform with n
     REQUIRE(render(voice, instrument, 500) == render(triangle, triangle_instrument, 500));
 }
 
-TEST_CASE("a voice mixes its noise at the noise level", "[voice]") {
+TEST_CASE("a voice mixes its noise at the noise level, before the filter", "[voice]") {
     irama::Instrument instrument{rate};
     instrument.set(index_of(irama::InstrumentParam::osc1_level), 0.0F, false);
     instrument.set(index_of(irama::InstrumentParam::noise_level), 50.0F, false);
@@ -304,12 +417,18 @@ TEST_CASE("a voice mixes its noise at the noise level", "[voice]") {
     voice.start(57, 1.0F, instrument, irama::Pcg32{5, 6});
     const auto out = render(voice, instrument, attack_and_decay_frames + 480);
 
+    // The noise through the default filter.
     irama::Noise noise;
     noise.start(irama::Pcg32{5, 6});
     std::vector<float> expected(attack_and_decay_frames + 480);
+    irama::Svf filter;
+    const std::vector<irama::SvfCoefficients> coefficients(
+        expected.size(), irama::svf_coefficients(20'000.0F, 0.0F, rate));
     {
         const irama::RenderScope scope;
         noise.render(expected);
+        filter.render(expected, irama::FilterMode::low_pass, irama::FilterSlope::db12,
+                      coefficients);
     }
     for (std::size_t frame = attack_and_decay_frames; frame < expected.size(); ++frame) {
         REQUIRE_THAT(out.at(2 * frame),
@@ -364,10 +483,11 @@ TEST_CASE("a coarse step during a note jumps in pitch with a continuous phase", 
     static_cast<void>(render(voice, instrument, attack_and_decay_frames));
     instrument.set(index_of(irama::InstrumentParam::osc1_coarse), 12.0F, true);
     const auto out = render(voice, instrument, 480);
-    for (std::size_t frame = 0; frame < out.size() / 2; ++frame) {
+    // Once the filter has settled on the new pitch, a few frames after the step.
+    for (std::size_t frame = 32; frame < out.size() / 2; ++frame) {
         const double phase = (static_cast<double>(attack_and_decay_frames) * 440.0 / 48'000.0) +
                              (static_cast<double>(frame) * 880.0 / 48'000.0);
-        const double expected = sustain_gain * std::sin(2.0 * std::numbers::pi * phase);
+        const double expected = filtered_sine(sustain_gain, 880.0, phase);
         REQUIRE_THAT(out.at(2 * frame), WithinAbs(expected, 1e-4));
     }
 }
