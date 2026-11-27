@@ -53,6 +53,16 @@ void odd_length(irama::Player& player) {
     player.render(out);
 }
 
+// A second player, beside the one each case is given.
+void too_many_voices(irama::Player& /*player*/) {
+    [[maybe_unused]] const auto created =
+        irama::Player::create({.max_voices = irama::Player::max_voices_limit + 1});
+}
+
+void no_voices(irama::Player& /*player*/) {
+    [[maybe_unused]] const auto created = irama::Player::create({.max_voices = 0});
+}
+
 struct NamedCase {
     std::string_view name;
     Case run = nullptr;
@@ -67,6 +77,8 @@ constexpr std::array cases{
     NamedCase{.name = "parameter-nan", .run = parameter_nan},
     NamedCase{.name = "frames-backwards", .run = frames_backwards},
     NamedCase{.name = "odd-length", .run = odd_length},
+    NamedCase{.name = "too-many-voices", .run = too_many_voices},
+    NamedCase{.name = "no-voices", .run = no_voices},
 };
 
 int run(std::string_view name) {

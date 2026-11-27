@@ -11,21 +11,29 @@
 #include <irama/engine/voice/voice.hpp>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <ranges>
 #include <span>
 #include <utility>
 #include <vector>
 
 namespace {
 
+using Catch::Matchers::WithinAbs;
+
 constexpr std::uint32_t rate = 48'000;
 
 // The default release at 48 kHz.
 constexpr std::size_t release_frames = 9'600;
+
+// A stolen voice's fade at 48 kHz.
+constexpr std::size_t fade_frames = 240;
 
 [[nodiscard]] irama::PlayerPtr make_player(std::size_t max_voices = 32) {
     auto player = irama::Player::create({.sample_rate = rate, .max_voices = max_voices});
@@ -103,6 +111,53 @@ void send_values(irama::Player& player, std::uint64_t frame) {
     return player;
 }
 
+// The frames of one note played alone at a frame, by a player of one voice at the instrument's
+// defaults, whose noise is silent.
+[[nodiscard]] std::vector<float> note_alone(std::uint64_t frame, int note, float velocity,
+                                            std::size_t frames) {
+    const auto player = make_player(1);
+    REQUIRE(player->note_on(frame, note, velocity));
+    return render(*player, frames);
+}
+
+// More notes than a player of 32 voices has voices and fade slots, so notes steal and fades are
+// cut.
+void send_crowd(irama::Player& player) {
+    for (std::uint64_t note = 0; note < 64; ++note) {
+        REQUIRE(player.note_on(note * 10, 57, 1.0F));
+    }
+}
+
+// The gain of a stolen note's fade at a frame: 1 until the frame it is stolen, then
+// `1 − (i + 1) / n` on frame `i` of the fade, and 0 from `end`, where the fade ends or is cut.
+[[nodiscard]] double fade_gain(std::uint64_t frame, std::uint64_t stolen, std::uint64_t end) {
+    if (frame < stolen) {
+        return 1.0;
+    }
+    if (frame >= end) {
+        return 0.0;
+    }
+    return 1.0 - (static_cast<double>(frame - stolen + 1) / static_cast<double>(fade_frames));
+}
+
+// Adds a note's frames into `sum`, faded as `fade_gain()` says.
+void add_faded(std::vector<double>& sum, std::span<const float> note, std::uint64_t stolen,
+               std::uint64_t end) {
+    for (const auto [index, total, sample] :
+         std::views::zip(std::views::iota(std::size_t{0}), sum, note)) {
+        const std::uint64_t frame = index / 2;
+        total += fade_gain(frame, stolen, end) * static_cast<double>(sample);
+    }
+}
+
+// Requires each sample to be within float rounding of the one expected.
+void require_near(std::span<const float> out, std::span<const double> expected) {
+    REQUIRE(out.size() == expected.size());
+    for (const auto [sample, wanted] : std::views::zip(out, expected)) {
+        REQUIRE_THAT(sample, WithinAbs(wanted, 1e-6));
+    }
+}
+
 [[nodiscard]] bool silent(std::span<const float> samples) {
     return std::ranges::all_of(samples, [](float sample) { return sample == 0.0F; });
 }
@@ -125,6 +180,17 @@ TEST_CASE("a player renders the same messages alike however its calls are split"
     REQUIRE(render_split(*ragged, frames, {1, 7, 0, 255, 257, 1'000, 4'096}) == once);
 }
 
+TEST_CASE("a player that steals renders alike however its calls are split", "[player]") {
+    // Two voices for five notes, so notes steal and their fades cross the calls.
+    constexpr std::size_t frames = 24'000;
+    const auto whole = make_player(2);
+    send_chords(*whole);
+    const auto once = render(*whole, frames);
+    const auto ragged = make_player(2);
+    send_chords(*ragged);
+    REQUIRE(render_split(*ragged, frames, {1, 7, 0, 255, 257, 1'000, 4'096}) == once);
+}
+
 TEST_CASE("a player frees every block it allocated, with its size and alignment", "[player]") {
     irama::test::CountingAllocator counting;
     {
@@ -133,8 +199,9 @@ TEST_CASE("a player frees every block it allocated, with its size and alignment"
         REQUIRE(player.has_value());
         REQUIRE(counting.allocations() > 0);
         const std::size_t allocated = counting.allocations();
-        REQUIRE((*player)->note_on(0, 57, 1.0F));
+        send_crowd(**player);
         static_cast<void>(render(**player, 1'000));
+        REQUIRE((*player)->active_voices() == 32);
         REQUIRE(counting.allocations() == allocated);
     }
     REQUIRE(counting.frees() == counting.allocations());
@@ -330,18 +397,75 @@ TEST_CASE("a note-off releases every held voice playing its note", "[player]") {
     REQUIRE(player->active_voices() == 1);
 }
 
-TEST_CASE("with no voice free, a note-on is ignored", "[player]") {
-    const auto crowded = make_player(2);
-    REQUIRE(crowded->note_on(0, 48, 1.0F));
-    REQUIRE(crowded->note_on(0, 52, 1.0F));
-    REQUIRE(crowded->note_on(10, 55, 1.0F));
-    const auto crowded_out = render(*crowded, 1'000);
-    REQUIRE(crowded->active_voices() == 2);
+TEST_CASE("with no voice free, a note-on steals a voice, which fades out over exactly 5 ms",
+          "[player]") {
+    constexpr std::uint64_t steal = 1'000;
+    constexpr std::size_t frames = 2'000;
+    const auto player = make_player(1);
+    REQUIRE(player->note_on(0, 48, 1.0F));
+    REQUIRE(player->note_on(steal, 55, 0.8F));
+    const auto out = render(*player, frames);
+    REQUIRE(player->active_voices() == 1);
 
-    const auto pair = make_player(2);
-    REQUIRE(pair->note_on(0, 48, 1.0F));
-    REQUIRE(pair->note_on(0, 52, 1.0F));
-    REQUIRE(render(*pair, 1'000) == crowded_out);
+    // The new note starts on its frame, while the stolen one fades. The new note's saw starts at
+    // phase 0, so its first frame is silent too.
+    const auto stolen = note_alone(0, 48, 1.0F, frames);
+    const auto stealing = note_alone(steal, 55, 0.8F, frames);
+    REQUIRE(silent(std::span{stealing}.first((steal + 1) * 2)));
+    REQUIRE(stealing.at((steal + 1) * 2) != 0.0F);
+    std::vector<double> expected(stealing.begin(), stealing.end());
+    add_faded(expected, stolen, steal, steal + fade_frames);
+    require_near(out, expected);
+
+    // Before the steal, the stolen note is alone, and from the fade's last frame on, the new one.
+    REQUIRE(
+        std::ranges::equal(std::span{out}.first(steal * 2), std::span{stolen}.first(steal * 2)));
+    constexpr std::size_t last_faded = (steal + fade_frames - 2) * 2;
+    REQUIRE(out.at(last_faded) != stealing.at(last_faded));
+    REQUIRE(std::ranges::equal(std::span{out}.subspan(last_faded + 2),
+                               std::span{stealing}.subspan(last_faded + 2)));
+}
+
+TEST_CASE("with all 8 fade slots busy, a steal cuts the fade nearest its end", "[player]") {
+    // One voice, and a note every 10 frames, so each note steals the one before. The ninth steal
+    // finds all 8 fade slots busy, and cuts the first stolen note's fade.
+    constexpr std::size_t notes = 10;
+    constexpr std::uint64_t spacing = 10;
+    constexpr std::size_t frames = 600;
+    const auto player = make_player(1);
+    for (std::size_t note = 0; note < notes; ++note) {
+        REQUIRE(player->note_on(note * spacing, 40 + static_cast<int>(note), 1.0F));
+    }
+    const auto out = render(*player, frames);
+
+    std::vector<double> expected(out.size());
+    for (std::size_t note = 0; note < notes; ++note) {
+        const std::uint64_t start = note * spacing;
+        // The last note is never stolen.
+        const std::uint64_t stolen = note + 1 < notes ? start + spacing : frames;
+        const std::uint64_t end = note == 0 ? (notes - 1) * spacing : stolen + fade_frames;
+        add_faded(expected, note_alone(start, 40 + static_cast<int>(note), 1.0F, frames), stolen,
+                  end);
+    }
+    require_near(out, expected);
+}
+
+TEST_CASE("a player never counts more voices than it has, however many notes steal", "[player]") {
+    constexpr std::size_t max_voices = 4;
+    const auto player = make_player(max_voices);
+    for (std::uint64_t note = 0; note < 40; ++note) {
+        REQUIRE(player->note_on(note * 37, 40 + static_cast<int>(note % 30), 1.0F));
+        if (note % 3 == 0) {
+            REQUIRE(player->note_off((note * 37) + 20, 40 + static_cast<int>(note % 30)));
+        }
+    }
+    std::uint32_t most = 0;
+    for (std::size_t call = 0; call < 40; ++call) {
+        static_cast<void>(render(*player, 50));
+        REQUIRE(player->active_voices() <= max_voices);
+        most = std::max(most, player->active_voices());
+    }
+    REQUIRE(most == max_voices);
 }
 
 TEST_CASE("a released voice is free again for the next note-on", "[player]") {

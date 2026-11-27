@@ -40,7 +40,7 @@ exceptions or RTTI.
 | `wav` | The WAV writer, which irama-cli and the tests share. | `base` |
 | `param` | Parameters: the descriptor that says what each one is, its scale conversions, and the smoother that glides it to each new value. | `base` |
 | `source` | The basic source a voice plays, the band-limited oscillator and the noise, and the tuning that gives each note its frequency. | `base` |
-| `voice` | A voice, one sounding note, the ADSR envelope that shapes it, and the instrument: its parameter table, and the values every voice reads from it. | `source`, `param`, `base` |
+| `voice` | A voice, one sounding note, the ADSR envelope that shapes it, how a player chooses and steals voices, and the instrument: its parameter table, and the values every voice reads from it. | `source`, `param`, `base` |
 | `player` | `irama::Player`, the object a host renders, which owns the instrument, the voices and the queue of control messages. | `voice`, `param`, `base` |
 
 `irama::engine` links every component but `capi`. Nothing links `capi`: it sits on top of the other
@@ -120,9 +120,9 @@ which **ThreadSanitizer**, in `clang-tsan`, watches for races.
 
 `irama::Player`, in `<irama/engine/player/player.hpp>`, is the object a host renders.
 `Player::create()` takes a `PlayerConfig`: the sample rate, which is fixed for the player's life,
-the number of voices, 32 by default and at most 256, the seed of its random numbers, and the
+the number of voices, 32 by default and at most 256, which `IRAMA_ASSERT` checks, the seed of its random numbers, and the
 allocator. It allocates the player, its
-voices and its working buffers there and then, and never again, and returns them in a `PlayerPtr`,
+voices, its fade slots and its working buffers there and then, and never again, and returns them in a `PlayerPtr`,
 the owning pointer, or `CreateError::out_of_memory`, having freed whatever it had allocated. The
 player never moves, so the pointer the audio thread holds stays valid. A player is created and
 destroyed on a control thread and rendered on the audio thread, never both at once.
@@ -143,22 +143,29 @@ destroyed on a control thread and rendered on the audio thread, never both at on
   frame of the next render call. The queue has no peek, so the player keeps the one message it has
   popped whose frame hasn't come yet, and one render call pops at most 1,024 messages. The player
   writes what its voices sum to, unclipped.
-- **Voices.** A note-on starts the first free voice, and with none free the note is ignored. A
-  note-off releases every held voice playing its note, and a release-all every held voice. The
-  player keeps one `irama::Pcg32`, of the config's seed on stream 0, a fixed number by default,
+- **Voices.** A note-on starts the first free voice. With none free, it steals one, as
+  `irama::choose_voice()` chooses: the oldest voice in its release, or with none releasing the
+  quietest, whose envelope level times its velocity's gain is lowest at the note-on's frame, and of
+  the equally quiet the oldest. A voice's age is the order its note started in, however long it has
+  been releasing. The stolen voice is copied into one of 8 fade slots, allocated beside the voices,
+  and fades out there linearly over 5 ms, rounded to whole frames: frame `i` of `n` is at
+  `1 − (i + 1) / n` of its level, so its last frame is silent. Its own voice starts the new note on
+  the note-on's frame. With all 8 fade slots busy, `irama::choose_fade_slot()` cuts the fade nearest
+  its end. A note-off releases every held voice playing its note, and a release-all every held
+  voice. The player keeps one `irama::Pcg32`, of the config's seed on stream 0, a fixed number by default,
   and each note-on splits the new voice's noise generator from it: a seed and a stream drawn from
   its next four outputs. So voices' noise is uncorrelated, and the output depends only on the seed
   and the control messages. After
   each render call, the number of voices sounding is written to an atomic, which `active_voices()`
-  reads on any thread.
+  reads on any thread. Fading voices don't count, so it never exceeds `max_voices`.
 - **Parameters.** The player owns one `irama::Instrument`, the live value of each of the
   instrument's parameters, filled with their defaults when it is created. `set_parameter()` takes
   a parameter's ID and a plain value. On the control thread it finds the parameter's index in
   `irama::instrument_params`, asserts that the ID is one of them and that the value isn't NaN, and
   constrains the value, clamping it to the range and rounding a stepped value to the nearest whole
   number, so a slider's 1.0001 is never an error. At its frame the value goes to the parameter's
-  smoother: a parameter with a smoothing time glides to it if any voice is sounding, and jumps to it
-  if none is. So a new player given its values by `set_parameter()` at frame 0 renders as if it had
+  smoother: a parameter with a smoothing time glides to it if any voice is sounding, a fading one
+  included, and jumps to it if none is. So a new player given its values by `set_parameter()` at frame 0 renders as if it had
   been created with them, which is how a host replaces a player and keeps its values.
 
 ### Parameters
@@ -217,7 +224,9 @@ temperament with A-4, note 57, at 440 Hz. A change of waveform while a voice sou
 linearly over 5 ms, rounded to whole frames: the voice copies its oscillator, plays the old waveform
 on the copy and the new one on its own, from the same phase, and frame `i` of `n` is `(i + 1) / n`
 of the new one. A change during a crossfade starts a new one from the waveform fading in. A coarse
-step is a jump in pitch with a continuous phase, and doesn't crossfade.
+step is a jump in pitch with a continuous phase, and doesn't crossfade. A voice that `fade_out()` starts
+fading, as a stolen one does, multiplies its envelope's levels by the fade's, and is free on the
+frame after the fade's last, or after its release ends, if that comes first.
 
 The oscillator plays a sine, a triangle, a saw or a pulse from one `float` phase in [0, 1), which
 moves on by the frequency over the sample rate each sample. Each waveform's fundamental is in phase
