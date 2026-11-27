@@ -4,6 +4,7 @@
 #pragma once
 
 #include "views/audio_window.hpp"
+#include "views/instrument_window.hpp"
 
 namespace irama_studio {
 
@@ -17,13 +18,15 @@ class Workspace {
     /// Draws one frame of the workspace, and returns false once the user has chosen to quit.
     ///
     /// \param status What the status bar shows, and where it puts what the user asks of it.
-    /// \param engine The audio engine, which the Audio window describes.
-    [[nodiscard]] bool draw(StatusBar& status, const AudioEngine& engine);
+    /// \param engine The audio engine, which the Audio window describes and the Instrument window
+    ///               changes the instrument's values through.
+    [[nodiscard]] bool draw(StatusBar& status, AudioEngine& engine);
 
     /// \return The Audio window, with what the user asked of it on the latest frame.
     [[nodiscard]] const AudioWindow& audio_window() const { return audio_window_; }
 
   private:
+    InstrumentWindow instrument_;
     bool instrument_open_ = true;
     bool audio_open_ = true;
     bool about_open_ = false;

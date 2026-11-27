@@ -9,11 +9,14 @@ add_executable(irama_studio_tests
     config_files_tests.cpp
     device_choice_tests.cpp
     heartbeat_watch_tests.cpp
+    instrument_layout_tests.cpp
+    instrument_values_tests.cpp
     key_map_tests.cpp
     message_backlog_tests.cpp
     meter_display_tests.cpp
     note_keys_tests.cpp
     options_tests.cpp
+    param_text_tests.cpp
     play_tests.cpp
     settings_tests.cpp
     video_drivers_tests.cpp

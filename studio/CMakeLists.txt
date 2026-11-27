@@ -40,14 +40,18 @@ add_library(irama_studio_core STATIC
     src/app/settings.cpp
     src/audio/audio_device.cpp
     src/audio/audio_engine.cpp
+    src/audio/create_player.cpp
     src/audio/device_choice.cpp
+    src/audio/instrument_values.cpp
     src/audio/miniaudio.cpp
     src/input/key_map.cpp
     src/input/note_keys.cpp
     src/ui/fonts.cpp
+    src/ui/param_text.cpp
     src/ui/theme.cpp
     src/views/about.cpp
     src/views/audio_window.cpp
+    src/views/instrument_layout.cpp
     src/views/instrument_window.cpp
     src/views/status_bar.cpp
     src/views/workspace.cpp

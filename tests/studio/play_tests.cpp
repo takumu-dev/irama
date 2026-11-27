@@ -8,6 +8,7 @@
 #include "audio/audio_device.hpp"
 #include "audio/audio_engine.hpp"
 #include "input/note_keys.hpp"
+#include <irama/engine/voice/instrument.hpp>
 
 #include <catch2/catch_message.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -128,6 +129,54 @@ TEST_CASE("with no working backend the engine stays silent and says why", "[stud
     CHECK_FALSE(engine.open());
     CHECK_FALSE(engine.is_open());
     CHECK_FALSE(engine.last_error().empty());
+}
+
+TEST_CASE("a parameter changed while a device plays reaches its player at once", "[studio][play]") {
+    AudioEngine engine{null_backend};
+    REQUIRE(engine.open());
+    NoteKeys keys;
+    press_chord(keys, engine);
+    REQUIRE(render_for(engine, 0.2));
+    const float loud = engine.take_output_peak();
+    REQUIRE(loud > 0.01F);
+
+    // 60 dB below the default gain of -12 dB is far quieter, once the 20 ms glide has passed.
+    engine.set_parameter(irama::InstrumentParam::gain, -60.0F);
+    CHECK(engine.parameters().value(irama::InstrumentParam::gain) == -60.0F);
+    REQUIRE(render_for(engine, 0.05));
+    static_cast<void>(engine.take_output_peak());
+    REQUIRE(render_for(engine, 0.1));
+    const float quiet = engine.take_output_peak();
+    INFO("peak at the default gain " << loud << ", and at -60 dB " << quiet);
+    CHECK(quiet > 0.0F);
+    CHECK(quiet < loud / 100.0F);
+}
+
+TEST_CASE("a parameter changed with no device open changes only the copy, and the next device's "
+          "player starts with it",
+          "[studio][play]") {
+    AudioEngine engine{null_backend};
+    engine.set_parameter(irama::InstrumentParam::gain, -60.0F);
+    engine.flush();
+    CHECK(engine.parameters().value(irama::InstrumentParam::gain) == -60.0F);
+
+    REQUIRE(engine.open());
+    NoteKeys keys;
+    press_chord(keys, engine);
+    REQUIRE(render_for(engine, 0.2));
+    const float quiet = engine.take_output_peak();
+    CHECK(quiet > 0.0F);
+    CHECK(quiet < 0.01F);
+
+    // A new buffer size reopens the device with a new player, which starts with the copy too. The
+    // new player starts silent, so the keys are pressed again.
+    REQUIRE(engine.open("", 512));
+    NoteKeys pressed_again;
+    press_chord(pressed_again, engine);
+    REQUIRE(render_for(engine, 0.2));
+    const float reopened = engine.take_output_peak();
+    CHECK(reopened > 0.0F);
+    CHECK(reopened < 0.01F);
 }
 
 TEST_CASE("a listed device opens by its name on the Null backend", "[studio][play]") {

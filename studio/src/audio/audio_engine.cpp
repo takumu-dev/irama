@@ -4,11 +4,13 @@
 #include "audio/audio_engine.hpp"
 
 #include "audio/audio_device.hpp"
+#include "audio/create_player.hpp"
 #include "audio/device_choice.hpp"
 #include "audio/heartbeat_watch.hpp"
 #include "input/note_message.hpp"
 #include <irama/engine/base/nonblocking.hpp>
 #include <irama/engine/base/render_scope.hpp>
+#include <irama/engine/param/param_id.hpp>
 #include <irama/engine/player/player.hpp>
 
 #include <algorithm>
@@ -32,7 +34,8 @@ namespace {
 constexpr std::array<std::uint32_t, 4> player_rates{44'100, 48'000, 88'200, 96'000};
 constexpr std::uint32_t fallback_rate = 48'000;
 
-// Messages from the note keys apply as soon as the player can: frame 0 has always passed.
+// Messages from the note keys and the Instrument window apply as soon as the player can: frame 0
+// has always passed.
 constexpr std::uint64_t now_frame = 0;
 
 // Raises a peak shared with another thread to `value`, if `value` is the higher.
@@ -103,7 +106,8 @@ bool AudioEngine::open_choice(const DeviceChoice& choice) {
         }
     }
     const std::uint32_t sample_rate = granted_rate();
-    auto player = irama::Player::create({.sample_rate = sample_rate, .max_voices = player_voices});
+    auto player =
+        create_player({.sample_rate = sample_rate, .max_voices = player_voices}, parameters_);
     if (!player) {
         device_.close();
         error_ = "Not enough memory for the player";
@@ -133,10 +137,16 @@ void AudioEngine::send(const NoteMessage& message) {
     }
 }
 
+void AudioEngine::set_parameter(irama::ParamId id, float value) {
+    parameters_.set(id, value);
+    send_parameters();
+}
+
 void AudioEngine::flush() {
     if (player_) {
         backlog_.flush([this](const NoteMessage& waiting) { return deliver(waiting); });
     }
+    send_parameters();
 }
 
 std::uint32_t AudioEngine::active_voices() const { return player_ ? player_->active_voices() : 0; }
@@ -184,6 +194,14 @@ void AudioEngine::render(std::span<float> out) IRAMA_NONBLOCKING {
         raise(cpu_peak_, elapsed.count() * sample_rate_ / frames);
     }
     heartbeat_.fetch_add(1, std::memory_order_relaxed);
+}
+
+void AudioEngine::send_parameters() {
+    if (player_) {
+        parameters_.flush([this](irama::ParamId id, float value) {
+            return player_->set_parameter(now_frame, id, value);
+        });
+    }
 }
 
 bool AudioEngine::deliver(const NoteMessage& message) {

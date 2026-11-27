@@ -6,10 +6,13 @@
 #include "audio/audio_device.hpp"
 #include "audio/device_choice.hpp"
 #include "audio/heartbeat_watch.hpp"
+#include "audio/instrument_values.hpp"
 #include "audio/message_backlog.hpp"
 #include "input/note_message.hpp"
 #include <irama/engine/base/nonblocking.hpp>
+#include <irama/engine/param/param_id.hpp>
 #include <irama/engine/player/player.hpp>
+#include <irama/engine/voice/instrument.hpp>
 
 #include <array>
 #include <atomic>
@@ -28,9 +31,11 @@ inline constexpr std::array studio_backends{AudioBackend::pulseaudio, AudioBacke
 /// The number of voices Studio's player has.
 inline constexpr std::size_t player_voices = 32;
 
-/// Studio's sound: an audio device, and the player it renders while it is open.
+/// Studio's sound: an audio device, the player it renders while it is open, and Studio's copy of
+/// the instrument's parameter values.
 ///
-/// The engine holds a player only while a device is open, at the device's rate. The callback
+/// The engine holds a player only while a device is open, at the device's rate. Each new player
+/// starts with the whole copy, which outlives every player. The callback
 /// renders the player, clips its output to [−1, 1], and reports its CPU load, whether it clipped,
 /// and a heartbeat, all through atomics that the UI thread reads. Every function is called on the
 /// UI thread.
@@ -88,8 +93,19 @@ class AudioEngine {
     /// open, it does nothing.
     void send(const NoteMessage& message);
 
-    /// Sends the messages the player's queue has refused, as far as it now has room. Call it once
-    /// a frame.
+    /// Sets one of the instrument's parameters in Studio's copy, and sends it to the player at
+    /// once. If the player's queue refuses it, the copy keeps it and `flush()` sends it again. With
+    /// no device open, only the copy changes, and the next player starts with it.
+    ///
+    /// \param id The ID of one of the parameters in `irama::instrument_params`, which is checked.
+    /// \param value The new plain value, any number but NaN, constrained to the parameter.
+    void set_parameter(irama::ParamId id, float value);
+
+    /// \return Studio's copy of the instrument's parameter values.
+    [[nodiscard]] const InstrumentValues& parameters() const { return parameters_; }
+
+    /// Sends the messages and parameter values the player's queue has refused, as far as it now has
+    /// room. Call it once a frame.
     void flush();
 
     /// \return How many voices were sounding at the end of the latest callback.
@@ -140,12 +156,16 @@ class AudioEngine {
     // Puts a message in the player's queue, and returns whether the queue took it.
     [[nodiscard]] bool deliver(const NoteMessage& message);
 
+    // Sends the parameter values waiting in the copy, as far as the player's queue has room.
+    void send_parameters();
+
     AudioDevice device_;
     // The callback reads these two only while the device runs, and they change only while it
     // doesn't.
     irama::PlayerPtr player_;
     float sample_rate_ = 0.0F;
     MessageBacklog backlog_;
+    InstrumentValues parameters_{irama::instrument_params};
     std::string device_setting_;
     std::uint32_t buffer_size_ = default_buffer_size;
     // The name of the device open, or empty for the system default.
