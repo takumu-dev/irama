@@ -74,12 +74,17 @@ template <std::invocable Function> class [[nodiscard]] Deferred {
     Function function_;
 };
 
-// Reports why Studio can't start, with SDL's error, both on stderr and in a message box, since a
-// user who started Studio from a desktop sees no stderr. Returns the exit status to end with.
-[[nodiscard]] int fail(std::string_view what) {
-    const std::string message = std::format("{}: {}", what, SDL_GetError());
+// Reports why Studio can't start: the step that failed, then SDL's error. It goes to stderr, and
+// also to a message box, since a user who started Studio from a desktop sees no stderr, but not
+// under a test, where nobody would close the box. Returns the exit status to end with.
+[[nodiscard]] int fail(const Options& options, std::string_view step) {
+    const std::string_view why = SDL_GetError();
+    const std::string message =
+        std::format("{}: {}", step, why.empty() ? "SDL gave no reason" : why);
     std::println(stderr, "irama-studio: {}", message);
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title, message.c_str(), nullptr);
+    if (!options.exit_after_frames) {
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title, message.c_str(), nullptr);
+    }
     return exit_failure;
 }
 
@@ -200,12 +205,12 @@ class SettingsFiles {
 // Plays a key going down or up on the note keys. SDL's scancodes are USB HID usage IDs, which the
 // note keys read. A key going up always ends the note it started.
 void handle_key(const SDL_KeyboardEvent& key, NoteKeys& keys, AudioEngine& engine) {
-    const int usage = static_cast<int>(key.scancode);
+    const int usage_id = static_cast<int>(key.scancode);
     std::optional<NoteMessage> message;
     if (!key.down) {
-        message = keys.release(usage);
+        message = keys.release(usage_id);
     } else if (may_play(key)) {
-        message = keys.press(usage, key.repeat);
+        message = keys.press(usage_id, key.repeat);
     }
     if (message) {
         engine.send(*message);
@@ -289,7 +294,7 @@ void render(SDL_GPUDevice* device, SDL_Window* window) {
 int run(const Options& options) {
     SDL_SetAppMetadata(title, IRAMA_VERSION_STRING, nullptr);
     if (!SDL_Init(SDL_INIT_VIDEO)) {
-        return fail("Couldn't start SDL's video");
+        return fail(options, "Couldn't start SDL's video");
     }
     const Deferred quit_sdl{[] { SDL_Quit(); }};
 
@@ -306,21 +311,26 @@ int run(const Options& options) {
         SDL_CreateWindow(title, to_display(settings.window_width, scale),
                          to_display(settings.window_height, scale), window_flags);
     if (window == nullptr) {
-        return fail("Couldn't open the window");
+        return fail(options, "Couldn't open the window");
     }
     const Deferred destroy_window{[window] { SDL_DestroyWindow(window); }};
     SDL_SetWindowMinimumSize(window, to_display(min_window_width, scale),
                              to_display(min_window_height, scale));
 
-    SDL_GPUDevice* const device = SDL_CreateGPUDevice(
-        SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_METALLIB,
-        false, nullptr);
+    // ImGui's shaders for Direct3D 12 are DXBC, which SDL's Direct3D 12 driver always takes.
+    SDL_GPUDevice* const device =
+        SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL |
+                                SDL_GPU_SHADERFORMAT_DXBC | SDL_GPU_SHADERFORMAT_METALLIB,
+                            false, nullptr);
     if (device == nullptr) {
-        return fail("Couldn't create the GPU device");
+        return fail(options, "Couldn't create the GPU device");
     }
     const Deferred destroy_device{[device] { SDL_DestroyGPUDevice(device); }};
+    // Direct3D 12 sets no error of its own when it can't make the window's swapchain, so an
+    // earlier step's error mustn't stand in for it.
+    SDL_ClearError();
     if (!SDL_ClaimWindowForGPUDevice(device, window)) {
-        return fail("Couldn't draw in the window with the GPU device");
+        return fail(options, "Couldn't claim the window for the GPU device");
     }
     const Deferred release_window{[device, window] {
         SDL_WaitForGPUIdle(device);
@@ -328,7 +338,7 @@ int run(const Options& options) {
     }};
     if (!SDL_SetGPUSwapchainParameters(device, window, SDL_GPU_SWAPCHAINCOMPOSITION_SDR,
                                        SDL_GPU_PRESENTMODE_VSYNC)) {
-        return fail("Couldn't present with vsync");
+        return fail(options, "Couldn't present with vsync");
     }
     SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
     SDL_ShowWindow(window);
@@ -353,7 +363,7 @@ int run(const Options& options) {
     load_fonts(font_size);
 
     if (!ImGui_ImplSDL3_InitForSDLGPU(window)) {
-        return fail("Couldn't start ImGui's SDL backend");
+        return fail(options, "Couldn't start ImGui's SDL backend");
     }
     const Deferred shut_down_platform{[] { ImGui_ImplSDL3_Shutdown(); }};
     ImGui_ImplSDLGPU3_InitInfo renderer{};
@@ -361,7 +371,7 @@ int run(const Options& options) {
     renderer.ColorTargetFormat = SDL_GetGPUSwapchainTextureFormat(device, window);
     renderer.MSAASamples = SDL_GPU_SAMPLECOUNT_1;
     if (!ImGui_ImplSDLGPU3_Init(&renderer)) {
-        return fail("Couldn't start ImGui's SDL_GPU backend");
+        return fail(options, "Couldn't start ImGui's SDL_GPU backend");
     }
     const Deferred shut_down_renderer{[device] {
         SDL_WaitForGPUIdle(device);

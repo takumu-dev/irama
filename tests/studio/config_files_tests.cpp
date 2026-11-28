@@ -34,14 +34,22 @@ TEST_CASE("a relative XDG_CONFIG_HOME is ignored, as the XDG specification says"
           path{"/home/ana/.config/irama"});
 }
 
+TEST_CASE("the settings directory is irama in APPDATA when it is set", "[studio]") {
+    const Environment environment{.appdata = R"(C:\Users\ana\AppData\Roaming)"};
+    CHECK(irama_studio::config_directory(std::nullopt, environment) ==
+          path{R"(C:\Users\ana\AppData\Roaming)"} / "irama");
+}
+
 TEST_CASE("the settings directory is the one --config-dir gives, whatever the environment",
           "[studio]") {
-    const Environment environment{.xdg_config_home = "/home/ana/settings", .home = "/home/ana"};
-    CHECK(irama_studio::config_directory(path{"/tmp/clean"}, environment) == path{"/tmp/clean"});
+    const Environment xdg{.xdg_config_home = "/home/ana/settings", .home = "/home/ana"};
+    const Environment windows{.appdata = R"(C:\Users\ana\AppData\Roaming)"};
+    CHECK(irama_studio::config_directory(path{"/tmp/clean"}, xdg) == path{"/tmp/clean"});
+    CHECK(irama_studio::config_directory(path{"/tmp/clean"}, windows) == path{"/tmp/clean"});
     CHECK(irama_studio::config_directory(path{"/tmp/clean"}, Environment{}) == path{"/tmp/clean"});
 }
 
-TEST_CASE("there is no settings directory without --config-dir, XDG_CONFIG_HOME or HOME",
+TEST_CASE("there is no settings directory without --config-dir, APPDATA, XDG_CONFIG_HOME or HOME",
           "[studio]") {
     CHECK_FALSE(irama_studio::config_directory(std::nullopt, Environment{}).has_value());
 }

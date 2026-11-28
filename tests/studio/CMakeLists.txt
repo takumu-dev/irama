@@ -28,7 +28,7 @@ catch_discover_tests(irama_studio_tests
     PROPERTIES LABELS unit
 )
 
-set(irama_smoke_test "studio: starts with no display, draws 300 frames and quits cleanly")
+set(irama_smoke_test "studio: starts, draws 300 frames and quits cleanly")
 add_test(NAME "${irama_smoke_test}"
     COMMAND "${CMAKE_COMMAND}"
         "-DPROGRAM=$<TARGET_FILE:irama-studio>"
