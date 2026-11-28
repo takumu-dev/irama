@@ -19,14 +19,16 @@
 #include <cstdint>
 #include <span>
 #include <string_view>
+#include <utility>
 
 namespace irama {
 
 /// The IDs of the instrument's parameters.
 ///
 /// IDs fall in decimal blocks, one for each part of the instrument: the filter at 1000, the
-/// amplifier at 2000, the amplifier's envelope at 3000, and the subtractive source at 10000, whose
-/// oscillator `n` starts at `10000 + 10 · (n − 1)` and whose noise is at 10090.
+/// amplifier at 2000, the amplifier's envelope at 3000, the voice at 4000, and the subtractive
+/// source at 10000, whose oscillator `n` starts at `10000 + 10 · (n − 1)` and whose noise is at
+/// 10090.
 struct InstrumentParam {
     /// The oscillator's waveform: sine, triangle, saw or pulse.
     static constexpr ParamId osc1_waveform{10'000};
@@ -68,6 +70,20 @@ struct InstrumentParam {
     static constexpr ParamId decay_curve{3'005};
     /// The release's curve, from −1 to +1.
     static constexpr ParamId release_curve{3'006};
+    /// What a new note in a note column does to the held voices of this instrument the column
+    /// owns: note-off, cut or continue.
+    static constexpr ParamId new_note_action{4'000};
+};
+
+/// What a new note in a note column does to a held voice the column owns, by the voice's own
+/// instrument.
+enum class NewNoteAction : std::uint8_t {
+    /// Releases it.
+    note_off,
+    /// Fades it out over 5 ms, as a stolen voice fades, and it leaves the column.
+    cut,
+    /// Leaves it sounding, still owned by the column.
+    carry_on,
 };
 
 namespace detail {
@@ -90,6 +106,12 @@ inline constexpr std::array<std::string_view, 4> filter_mode_labels{
 inline constexpr std::array<std::string_view, 2> filter_slope_labels{
     "12 dB",
     "24 dB",
+};
+/// The labels of the new note actions, in the order of their values.
+inline constexpr std::array<std::string_view, 3> new_note_action_labels{
+    "Note-off",
+    "Cut",
+    "Continue",
 };
 
 /// How long a continuous parameter heard while a note sounds takes to reach a new value.
@@ -191,7 +213,17 @@ inline constexpr std::array instrument_params{
                        0.5F, 0.0F),
     detail::continuous(InstrumentParam::release_curve, "Release curve", ParamUnit::none, 2, -1.0F,
                        1.0F, 0.5F, 0.0F),
+    detail::stepped(InstrumentParam::new_note_action, "New note action", ParamUnit::none, 0.0F,
+                    2.0F, 0.0F, detail::new_note_action_labels),
 };
+
+/// Returns the pan's gain on each channel, constant-power: `sin(π/2 − θ)` on the left and `sin θ`
+/// on the right, with θ from 0 at −1 to π/2 at +1. Both sides take the sine of their angle, so a
+/// centred pan, whose angles are both π/4 exactly in float, is the same on each side to the bit.
+///
+/// \param position The pan, from −1, hard left, to +1, hard right.
+/// \return The gain on the left channel, then on the right, each from 0 to 1.
+[[nodiscard]] std::pair<float, float> pan_gains(float position);
 
 /// What every voice reads from the instrument during one block: the values it computes once for
 /// all of them.
@@ -213,6 +245,9 @@ struct InstrumentBlock {
     FilterSlope filter_slope = FilterSlope::db12;
     /// What the filter computes with at each frame, from the cutoff and the resonance.
     std::span<const SvfCoefficients> filter;
+    /// The amplifier's linear gain of each frame, before the pan, for a voice with a pan of its
+    /// own.
+    std::span<const float> gain;
     /// The envelope's times and curves, which a segment starting during the block latches.
     AdsrSettings envelope;
     /// The sustain level of each frame, from 0 to 1.
@@ -239,6 +274,8 @@ struct InstrumentBuffers {
     std::array<float, max_block_frames> noise_level{};
     /// The filter's coefficients of each frame.
     std::array<SvfCoefficients, max_block_frames> filter{};
+    /// The amplifier's linear gain of each frame.
+    std::array<float, max_block_frames> gain{};
     /// The sustain level of each frame.
     std::array<float, max_block_frames> sustain{};
     /// The gain of each frame on the left channel.
@@ -252,10 +289,9 @@ struct InstrumentBuffers {
 ///
 /// It holds one `ParamSmoother` for each parameter in `instrument_params`, at the same index, and
 /// advances them every frame, whether a voice reads them or not. The amplifier's gain is in
-/// decibels, and its pan is constant-power, `cos θ` on the left and `sin θ` on the right, with θ
-/// from 0 at −1 to π/2 at +1, so a centred voice is 3 dB down on each side. Both are computed every
-/// frame, and so are the tuning, `tuning_ratio(coarse + fine / 100)`, and the filter's
-/// coefficients, `svf_coefficients()` of the cutoff and the resonance.
+/// decibels, and its pan is constant-power, by `pan_gains()`, so a centred voice is 3 dB down on
+/// each side. Both are computed every frame, and so are the tuning, `tuning_ratio(coarse + fine /
+/// 100)`, and the filter's coefficients, `svf_coefficients()` of the cutoff and the resonance.
 class Instrument {
   public:
     /// The most frames `render()` computes at once.
@@ -296,6 +332,10 @@ class Instrument {
 
     /// \return The envelope's times and curves, as they are now.
     [[nodiscard]] AdsrSettings envelope() const;
+
+    /// \return What a new note in a note column does to a held voice of this instrument, as it is
+    ///         now.
+    [[nodiscard]] NewNoteAction new_note_action() const;
 
     /// Returns the gain of a note played at a velocity, `1 − s · (1 − v²)` for the velocity
     /// sensitivity `s`, from 0 to 1, as it is now.

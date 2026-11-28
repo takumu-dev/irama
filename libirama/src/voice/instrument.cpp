@@ -20,7 +20,6 @@
 #include <numbers>
 #include <ranges>
 #include <span>
-#include <tuple>
 #include <utility>
 
 namespace {
@@ -53,6 +52,7 @@ constexpr std::size_t release = index_of(InstrumentParam::release);
 constexpr std::size_t attack_curve = index_of(InstrumentParam::attack_curve);
 constexpr std::size_t decay_curve = index_of(InstrumentParam::decay_curve);
 constexpr std::size_t release_curve = index_of(InstrumentParam::release_curve);
+constexpr std::size_t new_note_action_index = index_of(InstrumentParam::new_note_action);
 
 constexpr float percent = 100.0F;
 constexpr float cents_per_semitone = 100.0F;
@@ -71,19 +71,18 @@ make_smoothers(float sample_rate, std::index_sequence<Index...> /*indices*/) {
     return {irama::ParamSmoother{std::get<Index>(irama::instrument_params), sample_rate}...};
 }
 
-// The amplifier's gain on each channel, for its gain in decibels and its pan. Both sides take the
-// sine of their angle, so that a centred pan, whose angles are both π/4 exactly in float, is the
-// same on each side to the bit.
-[[nodiscard]] std::pair<float, float> amplifier_gains(float decibels, float pan_position) {
-    constexpr float quarter_turn = std::numbers::pi_v<float> / 2.0F;
-    const float linear = std::pow(10.0F, decibels / 20.0F);
-    const float theta = (pan_position + 1.0F) * (quarter_turn / 2.0F);
-    return {linear * std::sin(quarter_turn - theta), linear * std::sin(theta)};
-}
+// The amplifier's linear gain, for its gain in decibels.
+[[nodiscard]] float linear_gain(float decibels) { return std::pow(10.0F, decibels / 20.0F); }
 
 } // namespace
 
 namespace irama {
+
+std::pair<float, float> pan_gains(float position) {
+    constexpr float quarter_turn = std::numbers::pi_v<float> / 2.0F;
+    const float theta = (position + 1.0F) * (quarter_turn / 2.0F);
+    return {std::sin(quarter_turn - theta), std::sin(theta)};
+}
 
 Instrument::Instrument(float sample_rate)
     : sample_rate_{sample_rate},
@@ -132,6 +131,10 @@ AdsrSettings Instrument::envelope() const {
     };
 }
 
+NewNoteAction Instrument::new_note_action() const {
+    return static_cast<NewNoteAction>(static_cast<int>(params_.at(new_note_action_index).value()));
+}
+
 float Instrument::velocity_gain(float velocity) const {
     const float sensitivity = params_.at(velocity_sensitivity).value() / percent;
     return 1.0F - (sensitivity * (1.0F - (velocity * velocity)));
@@ -145,6 +148,7 @@ InstrumentBlock Instrument::render(InstrumentBuffers& buffers,
     const auto tunings = std::span{buffers.tuning}.first(frames);
     const auto noise_levels = std::span{buffers.noise_level}.first(frames);
     const auto filters = std::span{buffers.filter}.first(frames);
+    const auto gains = std::span{buffers.gain}.first(frames);
     const auto sustain_levels = std::span{buffers.sustain}.first(frames);
     const auto left = std::span{buffers.left_gain}.first(frames);
     const auto right = std::span{buffers.right_gain}.first(frames);
@@ -180,16 +184,20 @@ InstrumentBlock Instrument::render(InstrumentBuffers& buffers,
     }
     if (params_.at(gain).ramping() || params_.at(pan).ramping()) {
         // The gain's decibels and the pan's positions go through the gains' buffers on the way.
-        params_.at(gain).render(left);
+        params_.at(gain).render(gains);
         params_.at(pan).render(right);
-        for (const auto [left_gain, right_gain] : std::views::zip(left, right)) {
-            std::tie(left_gain, right_gain) = amplifier_gains(left_gain, right_gain);
+        for (const auto [linear, left_gain, right_gain] : std::views::zip(gains, left, right)) {
+            linear = linear_gain(linear);
+            const auto [left_pan, right_pan] = pan_gains(right_gain);
+            left_gain = linear * left_pan;
+            right_gain = linear * right_pan;
         }
     } else {
-        const auto [left_gain, right_gain] =
-            amplifier_gains(params_.at(gain).value(), params_.at(pan).value());
-        std::ranges::fill(left, left_gain);
-        std::ranges::fill(right, right_gain);
+        const float linear = linear_gain(params_.at(gain).value());
+        const auto [left_pan, right_pan] = pan_gains(params_.at(pan).value());
+        std::ranges::fill(gains, linear);
+        std::ranges::fill(left, linear * left_pan);
+        std::ranges::fill(right, linear * right_pan);
     }
 
     const Waveform block_waveform = waveform();
@@ -206,6 +214,7 @@ InstrumentBlock Instrument::render(InstrumentBuffers& buffers,
         .filter_mode = block_filter_mode,
         .filter_slope = block_filter_slope,
         .filter = filters,
+        .gain = gains,
         .envelope = settings,
         .sustain = sustain_levels,
         .left_gain = left,

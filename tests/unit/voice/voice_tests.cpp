@@ -244,6 +244,44 @@ TEST_CASE("a voice follows the instrument's sustain level and pan while it sound
     }
 }
 
+TEST_CASE("a voice with a pan of its own keeps it, whatever the instrument's pan, until it starts "
+          "again",
+          "[voice]") {
+    auto instrument = instrument_playing(irama::Waveform::sine, rate);
+    instrument.set(index_of(irama::InstrumentParam::pan), 1.0F, false);
+    irama::Voice voice;
+    voice.start(57, 1.0F, instrument, irama::Pcg32{});
+    voice.fix_pan(-1.0F);
+    auto out = render(voice, instrument, 1'000);
+    for (std::size_t frame = 0; frame < 1'000; ++frame) {
+        REQUIRE(out.at((2 * frame) + 1) == 0.0F);
+    }
+    REQUIRE(std::ranges::any_of(out, [](float sample) { return sample != 0.0F; }));
+
+    // A centred pan of its own sounds as the instrument's centred pan does.
+    instrument.set(index_of(irama::InstrumentParam::pan), 0.0F, false);
+    irama::Voice centred;
+    irama::Voice fixed;
+    centred.start(57, 1.0F, instrument, irama::Pcg32{});
+    fixed.start(57, 1.0F, instrument, irama::Pcg32{});
+    fixed.fix_pan(0.0F);
+    auto twin_instrument = instrument;
+    REQUIRE(render(fixed, instrument, 1'000) == render(centred, twin_instrument, 1'000));
+
+    // A new start follows the instrument's pan again.
+    instrument.set(index_of(irama::InstrumentParam::pan), -1.0F, false);
+    voice.start(57, 1.0F, instrument, irama::Pcg32{});
+    out = render(voice, instrument, 1'000);
+    for (std::size_t frame = 0; frame < 1'000; ++frame) {
+        REQUIRE(out.at((2 * frame) + 1) == 0.0F);
+    }
+    instrument.set(index_of(irama::InstrumentParam::pan), 1.0F, false);
+    out = render(voice, instrument, 1'000);
+    for (std::size_t frame = 0; frame < 1'000; ++frame) {
+        REQUIRE(out.at(2 * frame) == 0.0F);
+    }
+}
+
 TEST_CASE("a voice is held until it is released, and free once its release ends", "[voice]") {
     irama::Instrument instrument{rate};
     irama::Voice voice;

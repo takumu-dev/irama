@@ -43,7 +43,8 @@ exceptions or RTTI.
 | `filter` | The state variable filter a voice plays its source through. | `base` |
 | `voice` | A voice, one sounding note, the ADSR envelope that shapes it, how a player chooses and steals voices, and the instrument: its parameter table, and the values every voice reads from it. | `source`, `filter`, `param`, `base` |
 | `model` | The song a player renders: the EngineSong, a table of immutable song, pattern and instrument parts, and the change sets that replace them. | `base` |
-| `player` | `irama::Player`, the object a host renders, which owns the EngineSong, the instruments' live state, the voices and the queues of control messages. | `model`, `voice`, `param`, `base` |
+| `seq` | The sequencer, which keeps the play position and turns an EngineSong's patterns into note-ons and note-offs at exact frames, without touching any voice. | `model`, `base` |
+| `player` | `irama::Player`, the object a host renders, which owns the EngineSong, the sequencer, the instruments' live state, the voices and the queues of control messages. | `seq`, `model`, `voice`, `param`, `base` |
 
 `irama::engine` links every component but `capi`. Nothing links `capi`: it sits on top of the other
 components, and its only public header is `irama.h`, which is C.
@@ -126,26 +127,28 @@ which **ThreadSanitizer**, in `clang-tsan`, watches for races.
 `Player::create()` takes a `PlayerConfig`: the sample rate, which is fixed for the player's life,
 the number of voices, 32 by default and at most 256, which `IRAMA_ASSERT` checks, and the
 allocator. It allocates the player, the new song's song part, a smoother table for each of the 254
-instrument numbers, its voices, its fade slots and its working buffers there and then, and never
-again, and returns them in a `PlayerPtr`, the owning pointer, or `CreateError::out_of_memory`,
+instrument numbers, its voices, its fade slots, its sequencer and its working buffers there and
+then, and never again, and returns them in a `PlayerPtr`, the owning pointer, or `CreateError::out_of_memory`,
 having freed whatever it had allocated. The player never moves, so the pointer the audio thread
 holds stays valid. A player is created and destroyed on a control thread and rendered on the audio
 thread, never both at once.
 
-- **Control messages.** `note_on()`, `note_off()`, `release_all()` and `change()` are called from
-  one control thread. Each checks its arguments with `IRAMA_ASSERT`, so a bad note, velocity,
+- **Control messages.** `note_on()`, `note_off()`, `release_all()`, `change()`, `play()`,
+  `set_loop()` and `stop()` are called from one control thread. Each checks its arguments with `IRAMA_ASSERT`, so a bad note, velocity,
   instrument number or instrument value never reaches the audio thread, and queues a control
   message in the player's own `irama::SpscQueue` of 1,024. Each returns whether the message was
   queued: a full queue refuses it and changes nothing. A message names an absolute frame, counted
   from the first frame the player renders, and frames never go backwards from one message to the
   next, which `IRAMA_DEBUG_ASSERT` checks. Notes are numbered as the note column numbers them, from
-  C-0 at 0 to B-9 at 119, a velocity runs from 0 to 1, and a note-on or a note-off names an
-  instrument number, from 01 to FE.
+  C-0 at 0 to B-9 at 119, a velocity runs from 0 to 1, a note-on or a note-off names an
+  instrument number, from 01 to FE, and a play names a slot, from 0 to 999, and a line, from 0 to
+  511.
 - **The render call.** `Player::render()` fills a span of interleaved stereo frames, any even
   length, none included. It is the only libirama function that opens a render scope, and it
   carries `IRAMA_NONBLOCKING`, as each component's per-block render function does. It renders in
   blocks of 256 frames, counted from the player's first frame, and splits a block at the frame of
-  each message, so each message applies exactly at its frame, and the output is the same however
+  each message and of each of the sequencer's notes and line starts, so each applies exactly at its
+  frame, the messages first and then the sequencer's notes, and the output is the same however
   the host splits its calls. A message whose frame has already been rendered applies at the first
   frame of the next render call. The queue has no peek, so the player keeps the one message it has
   popped whose frame hasn't come yet, and one render call pops at most 1,024 messages. The player
@@ -158,13 +161,17 @@ thread, never both at once.
   and fades out there linearly over 5 ms, rounded to whole frames: frame `i` of `n` is at
   `1 − (i + 1) / n` of its level, so its last frame is silent. Its own voice starts the new note on
   the note-on's frame. With all 8 fade slots busy, `irama::choose_fade_slot()` cuts the fade nearest
-  its end. A note on an instrument number that is empty at its frame plays nothing. A note-off
-  releases every held voice playing its note on its instrument, and a release-all every held voice.
-  The player keeps one `irama::Pcg32`, seeded on stream 0 from the song part's seed when the player
-  is created and again whenever a change set brings a song part with a different seed, and each
-  note-on splits the new voice's noise generator from it: a seed and a stream drawn from its next
-  four outputs. So voices' noise is uncorrelated, and the output depends only on the song and the
-  control messages. After
+  its end. A note on an instrument number that is empty at its frame plays nothing. Each voice
+  remembers its owner, kept beside it as its instrument number is: the note keys, for a note-on
+  message, or the note column whose note started it, or nobody once it is cut. A note-off message
+  releases every held voice of the note keys playing its note on its instrument, and a release-all
+  every held voice of the note keys, so no message cuts the song. The player keeps one
+  `irama::Pcg32`, seeded on stream 0 from the song part's seed when the player is created, again
+  whenever a change set brings a song part with a different seed, and at every play, and each
+  note-on, the sequencer's and the note keys' alike, splits the new voice's noise generator from
+  it: a seed and a stream drawn from its next four outputs. So voices' noise is uncorrelated, the
+  output depends only on the song and the control messages, and a song played from its start sounds
+  the same every time unless notes are played over it. After
   each render call, the number of voices sounding is written to an atomic, which `active_voices()`
   reads on any thread. Fading voices don't count, so it never exceeds `max_voices`.
 - **The song.** The player holds one `irama::EngineSong` and changes it only by change sets, as
@@ -190,6 +197,56 @@ thread, never both at once.
   with a voice sounding, instrument 01 first, into one set of `irama::InstrumentBuffers`, and its
   voices, then its fading voices, read them before the next instrument overwrites them. Every other
   instrument only moves its smoothers on.
+- **Playing the song.** A new player is stopped. A play starts the sequencer at its slot and line,
+  exactly at its frame, and reseeds the generator. A play while playing first does what a stop
+  does, at the same frame. A set-loop switches looping of the playing slot, and does nothing while
+  stopped. A stop releases every held voice a note column owns, so their tails ring out, and a stop
+  while stopped is a panic: every voice, the note keys' included, fades out over 5 ms. Each of the
+  sequencer's notes reaches the voices its column owns: an `OFF` releases those that are held, and a
+  note gives each of them its own instrument's new note action, parameter 4000, before it starts a
+  voice of its own, owned by the column, at its velocity and, if it has one, its fixed pan. Note-off
+  releases a held voice, cut fades it out over 5 ms and leaves it to nobody, and continue leaves it
+  sounding, owned by the column, until an `OFF` or a stop releases it. A
+  note with an empty instrument field, or naming an empty instrument number, starts no voice, but
+  still applies the action. A stolen voice leaves its owner with the voice it was copied from. At
+  the end of each render call the player writes the sequencer's play position to one relaxed
+  `std::atomic<std::uint64_t>`, packed by `irama::PlayPosition::pack()`, which `play_position()`
+  reads on any thread.
+
+### The sequencer
+
+The `seq` component holds the sequencer, and links `model` and `base`. `irama::Sequencer`, in
+`<irama/engine/seq/sequencer.hpp>`, is made by `create()` with an allocator and the sample rate,
+which allocates room for one line's notes, 768 of them, and never allocates again. It keeps the play
+position, the timing anchor and the notes of the line playing, reads the EngineSong it is given, and
+touches no voice, so its tests check its frames without rendering.
+
+- **Exact frames.** Time counts in 256ths of a line from an **anchor**, a whole frame at which a
+  line starts. The delay `d` of the line `n` lines after the anchor is unit `u = 256·n + d`, which
+  plays at frame `anchor + floor(u · rate · 6000 / (bpm100 · lpb · 256))`, the frame its exact time
+  falls in. The sequencer carries the remainder from line to line, in 64-bit integers, which gives
+  the same frames and never overflows. At 44.1 kHz, 120 BPM and LPB 4, line 1 starts at frame 5,512
+  and line 2 at 11,025. A play sets the anchor at its frame. A song part of another BPM or LPB lets
+  the line playing finish at its old length, and its timing starts at the next line start, which
+  becomes the anchor. Ticks per line change nothing.
+- **Lines.** Each line is read once, at its start, from the pattern its slot names in the song as
+  it is then, so an edit to a line already started is heard at its next play. The song part's tracks
+  and their note columns name each cell's column. A cell with a note plays it, and an `OFF` plays a
+  note-off, at its delay, 0 for an empty one. The volume is the note's velocity, `vol / 0x80`, or 1
+  for an empty volume, and a written pan fixes the voice's pan, 00 at −1, 40 at 0 and 80 at +1,
+  while an empty one follows the instrument's. The instrument number goes with the note as written,
+  empty or not. Instrument, volume or pan with no note do nothing. A delay of `0xFF` is the empty
+  field's byte, so it plays at 0. A line's notes are kept in the order of their frames, then of their
+  columns, the first track's first.
+- **The sequence.** After a pattern's last line comes line 0 of the same slot while it loops, and of
+  the next slot otherwise. After the last slot, and at a slot past the sequence's end, comes slot 0,
+  line 0, so a song never ends. A slot whose pattern number is empty plays as one empty line, so
+  every slot lasts at least a line. A line past its pattern's end ends its slot at once.
+- **Playing.** `play()` starts at a slot and a line at a frame, `set_loop()` switches looping while
+  playing, and `stop()` drops the notes still waiting. `next_frame()` gives the frame of the next
+  note or line start, and `advance()` at that frame returns the notes that play there, reading the
+  line that starts there when no note of the line before is left. `position()` is the slot and line
+  of the latest line started, and whether it plays and loops.
 
 ### The EngineSong
 
@@ -256,7 +313,8 @@ instrument can render several parameters for one block.
 
 `voice` declares the instrument's table, `irama::instrument_params`, and the IDs in
 `irama::InstrumentParam`. IDs fall in decimal blocks: the filter at 1000, the amplifier at 2000,
-the amplifier's envelope at 3000, and the subtractive source at 10000, whose oscillator `n` starts at
+the amplifier's envelope at 3000, the voice at 4000, whose new note action (note-off, cut or
+continue) a player reads when a new note arrives in a column, and the subtractive source at 10000, whose oscillator `n` starts at
 `10000 + 10 · (n − 1)` and whose noise is at 10090. The table holds every parameter of the basic
 synth. Continuous parameters heard while a note sounds glide over 20 ms. Stepped parameters, and those read
 only when a note or a segment starts, such as the envelope's times and curves and the velocity
@@ -266,13 +324,15 @@ sensitivity, switch at their frame.
 advances them every frame, whether a voice reads them or not, so there is one ramp for each
 parameter, shared by every voice of the instrument. For each block it computes what every voice
 reads, once, into `irama::InstrumentBuffers` it is given, or only moves its smoothers on: the
-sustain level of each frame, the gain of each frame on each channel, the source's values: the
+sustain level of each frame, the amplifier's linear gain of each frame, and its gain on each
+channel, the source's values: the
 waveform, which holds for the block, and the oscillator's level, the pulse width, the noise's level
 and the tuning of each frame, the ratio `2^((coarse + fine / 100) / 12)`; and the filter's: its mode
 and slope, which hold for the block, and its coefficients of each frame, `g = tan(π·fc/fs)` and the
 values derived from it, computed from the smoothed cutoff and resonance. The gain is in decibels,
-and the pan is constant-power, `sin(π/2 − θ)` on the left and `sin θ` on the right, with θ from 0 at
-−1 to π/2 at +1, so a centred voice is 3 dB down on each side, the same on both to the bit.
+and the pan is constant-power, `irama::pan_gains()`: `sin(π/2 − θ)` on the left and `sin θ` on the
+right, with θ from 0 at −1 to π/2 at +1, so a centred voice is 3 dB down on each side, the same on
+both to the bit.
 
 `irama::Voice` plays the basic source through an `irama::Svf`, shaped by an `irama::Adsr`, through
 the amplifier: an `irama::Oscillator` at the note's frequency from `irama::note_frequency()` times
@@ -280,7 +340,9 @@ the tuning, at the oscillator's level, plus `irama::Noise` at the noise's level.
 instrument as it is when it needs a value: the velocity's gain, `1 − s · (1 − v²)` for the
 sensitivity `s`, the waveform and the filter's mode and slope when it starts; each segment's time
 and curve when that segment starts; and the source's values, the filter's coefficients, the sustain
-level and the channels' gains every frame. It clears its filter's state when it starts. The tuning
+level and the channels' gains every frame. A voice whose pan `fix_pan()` fixed, until its next
+start, takes the instrument's linear gain every frame and its own pan's gains in place of the
+instrument's pan, unsmoothed. It clears its filter's state when it starts. The tuning
 is twelve-tone equal temperament with A-4, note 57, at 440 Hz. A change of waveform, filter mode or
 filter slope while a voice sounds crossfades linearly over 5 ms, rounded to whole frames: the voice
 copies its oscillator and its filter, plays the old configuration on the copies and the new one on
@@ -383,6 +445,12 @@ resonance and a cutoff sweeping up and back down, so it records the crossfades b
 slopes too. `synth-envelope` holds one note at its sustain, then releases it to the exact frame its
 release ends. `synth-chord` plays four overlapping notes of the default sound at different
 velocities.
+
+`irama_test_songs`, in `tests/songs/`, builds test songs from cells written as the pattern grid
+shows them, such as `"C-4 01 40 .. 00"` and `"OFF .. .. .. 10"`, into one change set holding every
+part, which loads a player or an EngineSong. It refuses a malformed cell, saying why, and links only
+`model`, so the tests of `seq` and `player` can link it. The notation lives only in the tests, and
+is no file format.
 
 `irama_test_support`, in `tests/support/`, is what the tests measure audio with: a radix-2 FFT in
 double precision, checked against a direct DFT, the seven-term Blackman-Harris window, and the
@@ -514,8 +582,8 @@ shortcuts.
 
 - Every note key plays at velocity 1, and key repeats are ignored.
 - A key's note is remembered when it goes down, so a key released after an octave change ends the
-  note it started. The keys play instrument 01. A note-off releases every voice on its note and
-  instrument, so the held keys are counted for each note, and only the release of the last key
+  note it started. The keys play instrument 01. A note-off releases every voice of the note keys
+  on its note and instrument, never the song's, so the held keys are counted for each note, and only the release of the last key
   holding a note sends its note-off.
 - A key going down plays nothing while ImGui takes typed text, while it runs a shortcut, or while
   Ctrl, Alt or Super is held. A key going up always ends its note. When the window loses focus,
@@ -637,8 +705,8 @@ starts with it.
 The Instrument window shows every parameter in `irama::instrument_params`, built from the
 descriptors rather than a list of its own, so a parameter added to the table shows up without a
 change to the window. Each parameter goes under one collapsing header by the block its ID falls in:
-Oscillator for the source's blocks, from 10000, then Filter (the 1000s), Amplifier (the 2000s) and
-Envelope (the 3000s), with any ID outside them under a last header, Other.
+Oscillator for the source's blocks, from 10000, then Filter (the 1000s), Amplifier (the 2000s),
+Envelope (the 3000s) and Voice (the 4000s), with any ID outside them under a last header, Other.
 
 - A linear or logarithmic parameter has a slider that moves in normalised values, through the
   descriptor's `to_normalized()` and `from_normalized()`, so a logarithmic one moves evenly in
@@ -763,7 +831,7 @@ The tests check that all of these agree.
 | `cmake/smoke_test.cmake` | Starts Studio, headless on Linux and in a window on Windows, and checks that it quits cleanly. |
 | `cmake/embed_file.cmake` | Writes a file's bytes into a C++ source, for Studio's font. |
 | `studio/` | Irama Studio: `irama_studio_core`, `irama-studio`, and the `.clang-tidy` that lets ImGui's printf-style functions through. |
-| `tests/` | The tests, one folder per component under `unit/`, the programs that must abort under `abort/`, the golden cases and the compare tool under `golden/`, Studio's tests under `studio/`, `irama_test_support` under `support/`, and the CLI and configuration checks. |
+| `tests/` | The tests, one folder per component under `unit/`, the programs that must abort under `abort/`, the golden cases and the compare tool under `golden/`, Studio's tests under `studio/`, `irama_test_support` under `support/`, `irama_test_songs` under `songs/`, and the CLI and configuration checks. |
 | `ci/` | The CI's Linux image, under `linux/`, the Windows job's scripts, under `windows/`, and the scripts the Linux jobs share. |
 | `THIRD_PARTY_NOTICES.md` | The notices of the libraries the applications ship. |
 | `REUSE.toml`, `LICENSES/` | The licences of files that can't hold a comment, and their texts. |

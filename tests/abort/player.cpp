@@ -47,6 +47,10 @@ void instrument_zero(irama::Player& player) { static_cast<void>(player.note_on(0
 
 void instrument_too_high(irama::Player& player) { static_cast<void>(player.note_off(0, 57, 0xFF)); }
 
+void slot_too_high(irama::Player& player) { static_cast<void>(player.play(0, 1'000, 0, false)); }
+
+void line_too_high(irama::Player& player) { static_cast<void>(player.play(0, 0, 512, false)); }
+
 void no_change_set(irama::Player& player) {
     irama::ChangeSetPtr changes;
     static_cast<void>(player.change(0, changes));
@@ -112,6 +116,8 @@ constexpr std::array cases{
     NamedCase{.name = "velocity-nan", .run = velocity_nan},
     NamedCase{.name = "instrument-zero", .run = instrument_zero},
     NamedCase{.name = "instrument-too-high", .run = instrument_too_high},
+    NamedCase{.name = "slot-too-high", .run = slot_too_high},
+    NamedCase{.name = "line-too-high", .run = line_too_high},
     NamedCase{.name = "no-change-set", .run = no_change_set},
     NamedCase{.name = "instrument-part-short", .run = instrument_part_short},
     NamedCase{.name = "instrument-value-out-of-range", .run = instrument_value_out_of_range},

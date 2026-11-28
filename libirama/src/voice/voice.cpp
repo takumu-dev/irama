@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <ranges>
 #include <span>
+#include <tuple>
 
 namespace {
 
@@ -63,8 +64,14 @@ void Voice::start(int note, float velocity, const Instrument& instrument, const 
     noise_.start(noise);
     envelope_.start(instrument.envelope(), sample_rate);
     velocity_gain_ = instrument.velocity_gain(velocity);
+    pan_fixed_ = false;
     order_ = order;
     note_ = note;
+}
+
+void Voice::fix_pan(float position) {
+    pan_fixed_ = true;
+    std::tie(left_pan_, right_pan_) = pan_gains(position);
 }
 
 void Voice::release(const Instrument& instrument) { envelope_.release(instrument.envelope()); }
@@ -86,6 +93,8 @@ void Voice::render(std::span<float> out, std::span<float> scratch,
     IRAMA_ASSERT(block.left_gain.size() >= frames && block.right_gain.size() >= frames,
                  "a voice has the instrument's values for each frame");
     IRAMA_ASSERT(block.filter.size() >= frames, "a voice has the filter's values for each frame");
+    IRAMA_ASSERT(!pan_fixed_ || block.gain.size() >= frames,
+                 "a voice with a pan of its own has the instrument's gain for each frame");
     const auto wave = scratch.first(frames);
     const auto other = scratch.subspan(frames, frames);
     const auto third = scratch.subspan(2 * frames, frames);
@@ -101,6 +110,14 @@ void Voice::render(std::span<float> out, std::span<float> scratch,
         }
     }
     auto sample = out.begin();
+    if (pan_fixed_) {
+        for (const auto [wave_sample, level, linear] : std::views::zip(wave, third, block.gain)) {
+            const float value = wave_sample * level * velocity_gain_;
+            *sample++ += value * (linear * left_pan_);
+            *sample++ += value * (linear * right_pan_);
+        }
+        return;
+    }
     for (const auto [wave_sample, level, left, right] :
          std::views::zip(wave, third, block.left_gain, block.right_gain)) {
         const float value = wave_sample * level * velocity_gain_;

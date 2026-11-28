@@ -36,9 +36,9 @@ struct ParamGroup {
 };
 
 /// Sorts a table's parameters into groups by their ID's block: the oscillator for the source's
-/// blocks, from 10000, then the filter (the 1000s), the amplifier (the 2000s) and the envelope
-/// (the 3000s). A parameter in no known block goes in a last group, Other, so that nothing in the
-/// table goes unshown.
+/// blocks, from 10000, then the filter (the 1000s), the amplifier (the 2000s), the envelope
+/// (the 3000s) and the voice (the 4000s). A parameter in no known block goes in a last group,
+/// Other, so that nothing in the table goes unshown.
 ///
 /// \param table The parameters, which stay where they are while the groups point into them.
 /// \return The groups in that order, leaving out any with no parameters.

@@ -25,7 +25,8 @@ namespace irama {
 /// A voice is the basic source, an `Oscillator` at the note's frequency tuned by the coarse and
 /// fine offsets, at the oscillator's level, plus `Noise` at the noise's level, through an `Svf` in
 /// the instrument's filter mode and slope, shaped by an `Adsr`, through the amplifier: the
-/// instrument's gain and pan on each channel, and the gain of the note's velocity. It reads the
+/// instrument's gain and pan on each channel, or its gain and the voice's own fixed pan, and the
+/// gain of the note's velocity. It reads the
 /// instrument's values as they are when it needs them: the velocity's gain, the waveform, the
 /// filter's mode and slope and the attack's settings when it starts, each later segment's settings
 /// when that segment starts, and the source's values, the filter's coefficients, the sustain level
@@ -66,6 +67,12 @@ class Voice {
     ///              leave it at 0.
     void start(int note, float velocity, const Instrument& instrument, const Pcg32& noise,
                std::uint64_t order = 0);
+
+    /// Fixes the voice's pan, in place of the instrument's, until its next start. A fixed pan isn't
+    /// smoothed.
+    ///
+    /// \param position The pan, from −1, hard left, to +1, hard right.
+    void fix_pan(float position);
 
     /// Starts the voice's release, unless it is already releasing or free.
     ///
@@ -144,6 +151,10 @@ class Voice {
     float frequency_ = 0.0F;
     // The gain of the note's velocity.
     float velocity_gain_ = 0.0F;
+    // Whether the voice has a pan of its own, and its gain on each channel.
+    bool pan_fixed_ = false;
+    float left_pan_ = 0.0F;
+    float right_pan_ = 0.0F;
     std::uint64_t order_ = 0;
     int note_ = 0;
 };
