@@ -13,8 +13,10 @@
 #include <irama/engine/model/change_set.hpp>
 #include <irama/engine/model/engine_song.hpp>
 #include <irama/engine/model/instrument_part.hpp>
+#include <irama/engine/model/pattern_part.hpp>
 #include <irama/engine/model/song_part.hpp>
 #include <irama/engine/param/param_descriptor.hpp>
+#include <irama/engine/seq/sequencer.hpp>
 #include <irama/engine/source/tuning.hpp>
 #include <irama/engine/voice/instrument.hpp>
 #include <irama/engine/voice/voice.hpp>
@@ -41,6 +43,22 @@ static_assert(block_frames <= irama::Instrument::max_block_frames);
 
 constexpr std::size_t channels = 2;
 
+constexpr int last_slot = 999;
+constexpr int last_line = 511;
+
+// A voice's owner: the note keys, nobody, or a note column, as its track in the high byte and its
+// column in the low one.
+constexpr std::uint16_t note_keys = 0xFFFF;
+constexpr std::uint16_t nobody = 0xFFFE;
+
+[[nodiscard]] constexpr std::uint16_t column_owner(std::uint8_t track, std::uint8_t column) {
+    return static_cast<std::uint16_t>((unsigned{track} << 8U) | unsigned{column});
+}
+
+[[nodiscard]] constexpr bool owned_by_column(std::uint16_t owner) {
+    return owner != note_keys && owner != nobody;
+}
+
 // Frees a change set that never came back, on the control thread.
 void free_unreturned(irama::ChangeSet* changes) {
     irama::AllocatorDelete<irama::ChangeSet>{.allocator = changes->allocator()}(changes);
@@ -62,12 +80,15 @@ std::expected<PlayerPtr, CreateError> Player::create(const PlayerConfig& config)
                                        Instrument{static_cast<float>(config.sample_rate)});
     auto voices = OwnedArray<Voice>::create(config.allocator, config.max_voices);
     auto voice_instruments = OwnedArray<std::uint8_t>::create(config.allocator, config.max_voices);
+    auto voice_owners =
+        OwnedArray<std::uint16_t>::create(config.allocator, config.max_voices, nobody);
     auto fades = OwnedArray<Voice>::create(config.allocator, fade_slots);
     auto fade_instruments = OwnedArray<std::uint8_t>::create(config.allocator, fade_slots);
     auto scratch =
         OwnedArray<float>::create(config.allocator, block_frames * Voice::scratch_per_frame);
-    if (!player || !song || !start || !instruments || !voices || !voice_instruments || !fades ||
-        !fade_instruments || !scratch) {
+    auto sequencer = Sequencer::create(config.allocator, config.sample_rate);
+    if (!player || !song || !start || !instruments || !voices || !voice_instruments ||
+        !voice_owners || !fades || !fade_instruments || !scratch || !sequencer) {
         return std::unexpected(CreateError::out_of_memory);
     }
     // The new song's song part goes in as any other does, and the change set that brought it, empty
@@ -79,9 +100,11 @@ std::expected<PlayerPtr, CreateError> Player::create(const PlayerConfig& config)
     (*player)->instruments_ = std::move(*instruments);
     (*player)->voices_ = std::move(*voices);
     (*player)->voice_instruments_ = std::move(*voice_instruments);
+    (*player)->voice_owners_ = std::move(*voice_owners);
     (*player)->fades_ = std::move(*fades);
     (*player)->fade_instruments_ = std::move(*fade_instruments);
     (*player)->scratch_ = std::move(*scratch);
+    (*player)->sequencer_ = std::move(*sequencer);
     return std::move(*player);
 }
 
@@ -151,6 +174,26 @@ bool Player::change(std::uint64_t frame, ChangeSetPtr& changes) {
     return true;
 }
 
+bool Player::play(std::uint64_t frame, int slot, int line, bool loop) {
+    IRAMA_ASSERT(slot >= 0 && slot <= last_slot, "a slot is from 0 to 999");
+    IRAMA_ASSERT(line >= 0 && line <= last_line, "a line is from 0 to 511");
+    return push(Message{
+        .frame = frame,
+        .kind = Message::Kind::play,
+        .slot = narrow<std::uint16_t>(slot),
+        .line = narrow<std::uint16_t>(line),
+        .loop = loop,
+    });
+}
+
+bool Player::set_loop(std::uint64_t frame, bool loop) {
+    return push(Message{.frame = frame, .kind = Message::Kind::set_loop, .loop = loop});
+}
+
+bool Player::stop(std::uint64_t frame) {
+    return push(Message{.frame = frame, .kind = Message::Kind::stop});
+}
+
 ChangeSetPtr Player::take_returned() {
     const std::optional<ChangeSet*> changes = returned_.try_pop();
     if (!changes) {
@@ -165,10 +208,14 @@ void Player::render(std::span<float> out) IRAMA_NONBLOCKING {
     std::size_t popped = 0;
     while (!out.empty()) {
         apply_due_messages(popped);
+        play_due_notes();
         std::uint64_t frames =
             std::min<std::uint64_t>(out.size() / channels, block_frames - (frame_ % block_frames));
         if (waiting_ && waiting_->frame > frame_) {
             frames = std::min(frames, waiting_->frame - frame_);
+        }
+        if (const std::optional<std::uint64_t> next = sequencer_->next_frame()) {
+            frames = std::min(frames, *next - frame_);
         }
         const std::size_t length = narrow<std::size_t>(frames) * channels;
         render_block(out.first(length));
@@ -177,10 +224,15 @@ void Player::render(std::span<float> out) IRAMA_NONBLOCKING {
     }
     const auto active = std::ranges::count_if(voices_, &Voice::active);
     active_voices_.store(narrow<std::uint32_t>(active), std::memory_order_relaxed);
+    play_position_.store(sequencer_->position().pack(), std::memory_order_relaxed);
 }
 
 std::uint32_t Player::active_voices() const {
     return active_voices_.load(std::memory_order_relaxed);
+}
+
+PlayPosition Player::play_position() const {
+    return PlayPosition::unpack(play_position_.load(std::memory_order_relaxed));
 }
 
 bool Player::push(const Message& message) {
@@ -215,35 +267,46 @@ void Player::apply_due_messages(std::size_t& popped) IRAMA_NONBLOCKING {
 
 bool Player::apply(const Message& message) IRAMA_NONBLOCKING {
     switch (message.kind) {
-    case Message::Kind::note_on: {
-        if (song_.instrument(message.instrument) == nullptr) {
-            break;
-        }
-        const std::size_t index = choose_voice(voices_.span());
-        Voice& voice = voices_[index];
-        if (voice.active()) {
-            // The stolen voice fades out in a copy, so its own voice starts the note on this frame.
-            const std::size_t slot = choose_fade_slot(fades_.span());
-            fades_[slot] = voice;
-            fades_[slot].fade_out();
-            fade_instruments_[slot] = voice_instruments_[index];
-        }
-        voice.start(message.note, message.velocity, instrument(message.instrument),
-                    generator_.split(), notes_started_++);
-        voice_instruments_[index] = message.instrument;
+    case Message::Kind::note_on:
+        start_voice(message.note, message.velocity, message.instrument, note_keys, std::nullopt);
         break;
-    }
     case Message::Kind::note_off:
-        for (const auto [voice, number] : std::views::zip(voices_, voice_instruments_)) {
-            if (voice.held() && voice.note() == message.note && number == message.instrument) {
+        for (const auto [voice, number, owner] :
+             std::views::zip(voices_, voice_instruments_, voice_owners_)) {
+            if (owner == note_keys && voice.held() && voice.note() == message.note &&
+                number == message.instrument) {
                 voice.release(instrument(number));
             }
         }
         break;
     case Message::Kind::release_all:
-        for (const auto [voice, number] : std::views::zip(voices_, voice_instruments_)) {
-            if (voice.active()) {
+        for (const auto [voice, number, owner] :
+             std::views::zip(voices_, voice_instruments_, voice_owners_)) {
+            if (owner == note_keys && voice.held()) {
                 voice.release(instrument(number));
+            }
+        }
+        break;
+    case Message::Kind::play:
+        if (sequencer_->playing()) {
+            release_columns();
+        }
+        generator_ = Pcg32{song_.song()->seed(), 0};
+        sequencer_->play(frame_, message.slot, message.line, message.loop, song_);
+        break;
+    case Message::Kind::set_loop:
+        sequencer_->set_loop(message.loop);
+        break;
+    case Message::Kind::stop:
+        if (sequencer_->playing()) {
+            release_columns();
+            sequencer_->stop();
+            break;
+        }
+        // A stop while stopped is a panic.
+        for (Voice& voice : voices_) {
+            if (voice.active() && !voice.fading()) {
+                voice.fade_out();
             }
         }
         break;
@@ -257,6 +320,78 @@ bool Player::apply(const Message& message) IRAMA_NONBLOCKING {
         break;
     }
     return true;
+}
+
+void Player::play_due_notes() IRAMA_NONBLOCKING {
+    while (sequencer_->next_frame() == frame_) {
+        for (const SeqNote& note : sequencer_->advance(frame_, song_)) {
+            play_note(note);
+        }
+    }
+}
+
+void Player::play_note(const SeqNote& note) IRAMA_NONBLOCKING {
+    const std::uint16_t owner = column_owner(note.track, note.column);
+    for (const auto [voice, number, voice_owner] :
+         std::views::zip(voices_, voice_instruments_, voice_owners_)) {
+        if (voice_owner != owner || !voice.held()) {
+            continue;
+        }
+        if (note.note == NoteCell::off) {
+            voice.release(instrument(number));
+            continue;
+        }
+        switch (instrument(number).new_note_action()) {
+        case NewNoteAction::note_off:
+            voice.release(instrument(number));
+            break;
+        case NewNoteAction::cut:
+            voice.fade_out();
+            voice_owner = nobody;
+            break;
+        case NewNoteAction::carry_on:
+            break;
+        }
+    }
+    if (note.note == NoteCell::off || note.instrument == NoteCell::empty) {
+        return;
+    }
+    start_voice(note.note, note.velocity, note.instrument, owner,
+                note.fixed_pan ? std::optional<float>{note.pan} : std::nullopt);
+}
+
+void Player::start_voice(int note, float velocity, std::size_t number, std::uint16_t owner,
+                         std::optional<float> pan) IRAMA_NONBLOCKING {
+    if (song_.instrument(number) == nullptr) {
+        return;
+    }
+    const std::size_t index = choose_voice(voices_.span());
+    Voice& voice = voices_[index];
+    if (voice.active()) {
+        // The stolen voice fades out in a copy, so its own voice starts the note on this frame. It
+        // leaves its owner, which the new note's owner replaces.
+        const std::size_t slot = choose_fade_slot(fades_.span());
+        fades_[slot] = voice;
+        if (!fades_[slot].fading()) {
+            fades_[slot].fade_out();
+        }
+        fade_instruments_[slot] = voice_instruments_[index];
+    }
+    voice.start(note, velocity, instrument(number), generator_.split(), notes_started_++);
+    if (pan) {
+        voice.fix_pan(*pan);
+    }
+    voice_instruments_[index] = narrow<std::uint8_t>(number);
+    voice_owners_[index] = owner;
+}
+
+void Player::release_columns() IRAMA_NONBLOCKING {
+    for (const auto [voice, number, owner] :
+         std::views::zip(voices_, voice_instruments_, voice_owners_)) {
+        if (owned_by_column(owner) && voice.held()) {
+            voice.release(instrument(number));
+        }
+    }
 }
 
 void Player::apply_changes(ChangeSet& changes) IRAMA_NONBLOCKING {

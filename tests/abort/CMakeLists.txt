@@ -197,6 +197,8 @@ irama_assertion_report(bad_velocity player.cpp
 irama_assertion_report(bad_instrument player.cpp
     "instrument >= 0x01 && instrument <= 0xFE" "an instrument number is from 01 to FE"
 )
+irama_assertion_report(bad_slot player.cpp "slot >= 0 && slot <= last_slot" "a slot is from 0 to 999")
+irama_assertion_report(bad_line player.cpp "line >= 0 && line <= last_line" "a line is from 0 to 511")
 irama_assertion_report(no_change_set player.cpp "changes != nullptr" "a change has a change set")
 irama_assertion_report(short_instrument player.cpp
     "values.size() == instrument_params.size()"
@@ -244,6 +246,16 @@ irama_add_abort_test(player "a note-off on instrument FF aborts with its report"
     PROGRAM irama_abort_player
     ARGUMENTS instrument-too-high
     REPORT "${bad_instrument}"
+)
+irama_add_abort_test(player "a play of slot 1000 aborts with its report"
+    PROGRAM irama_abort_player
+    ARGUMENTS slot-too-high
+    REPORT "${bad_slot}"
+)
+irama_add_abort_test(player "a play of line 512 aborts with its report"
+    PROGRAM irama_abort_player
+    ARGUMENTS line-too-high
+    REPORT "${bad_line}"
 )
 irama_add_abort_test(player "a change with no change set aborts with its report"
     PROGRAM irama_abort_player

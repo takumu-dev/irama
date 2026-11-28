@@ -14,6 +14,7 @@
 #include <irama/engine/base/spsc_queue.hpp>
 #include <irama/engine/model/change_set.hpp>
 #include <irama/engine/model/engine_song.hpp>
+#include <irama/engine/seq/sequencer.hpp>
 #include <irama/engine/voice/instrument.hpp>
 #include <irama/engine/voice/voice.hpp>
 
@@ -49,14 +50,20 @@ namespace detail {
 struct ControlMessage {
     /// What a control message does.
     enum class Kind : std::uint8_t {
-        /// Starts a note.
+        /// Starts a note on the note keys.
         note_on,
-        /// Releases the held voices playing a note.
+        /// Releases the note keys' held voices playing a note.
         note_off,
-        /// Releases every held voice.
+        /// Releases every held voice of the note keys.
         release_all,
         /// Applies a change set to the EngineSong.
         change,
+        /// Starts playing the song.
+        play,
+        /// Switches looping of the playing slot.
+        set_loop,
+        /// Stops playing, or fades out every voice while stopped.
+        stop,
     };
 
     /// The frame at which the message applies.
@@ -69,6 +76,12 @@ struct ControlMessage {
     std::uint8_t instrument = 0;
     /// The velocity of a note-on.
     float velocity = 0.0F;
+    /// The slot a play starts at.
+    std::uint16_t slot = 0;
+    /// The line a play starts at.
+    std::uint16_t line = 0;
+    /// Whether a play or a set-loop loops.
+    bool loop = false;
     /// The change set of a change, which the message owns while it travels: the player takes it
     /// from its owning pointer when it queues the message, and gives it one again when it hands it
     /// back.
@@ -82,16 +95,16 @@ class Player;
 /// The single owner of a player, which frees it through the allocator it was created with.
 using PlayerPtr = OwnedPtr<Player>;
 
-/// The object a host renders: it owns the EngineSong, the live state of each instrument and the
-/// voices, and plays the control messages it is sent.
+/// The object a host renders: it owns the EngineSong, the sequencer, the live state of each
+/// instrument and the voices, and plays the control messages it is sent.
 ///
 /// A player is created and destroyed on a control thread, and rendered on the audio thread, never
-/// both at once. Its control functions, `note_on()`, `note_off()`, `release_all()` and `change()`,
-/// are called from one control thread, and queue a message for `render()` to apply on the audio
-/// thread, at the frame the message names. Frames are counted from the first frame the player
-/// renders, and each message applies exactly at its frame, so the output never depends on how the
-/// host splits its render calls. A frame already rendered applies at the first frame of the next
-/// render call, so a message meant to apply at once can name frame 0.
+/// both at once. Its control functions, `note_on()`, `note_off()`, `release_all()`, `change()`,
+/// `play()`, `set_loop()` and `stop()`, are called from one control thread, and queue a message for
+/// `render()` to apply on the audio thread, at the frame the message names. Frames are counted from
+/// the first frame the player renders, and each message applies exactly at its frame, so the output
+/// never depends on how the host splits its render calls. A frame already rendered applies at the
+/// first frame of the next render call, so a message meant to apply at once can name frame 0.
 ///
 /// A new player's EngineSong has the new song's song part and every pattern and instrument entry
 /// empty. A host loads a song by sending a change set of every part at frame 0, before the first
@@ -109,10 +122,25 @@ using PlayerPtr = OwnedPtr<Player>;
 /// out over 5 ms. The player computes each block's values only for the instruments with a voice
 /// sounding, into one set of buffers it reuses for each in turn, instrument 01 first.
 ///
+/// The player owns one `Sequencer`, stopped when the player is created. It renders up to the
+/// earliest of the sequencer's next frame, the next message's frame and the block's end, and at a
+/// frame applies the messages first, then the sequencer's notes. Each voice remembers its owner:
+/// the note keys, for a note-on message, or the note column whose note started it, which owns it
+/// while it sounds, released or not. A new note in a column gives each held voice the column owns
+/// its own instrument's new note action: note-off releases it, cut fades it out over 5 ms and it
+/// leaves the column, and continue leaves it be. A note that plays nothing, with an empty
+/// instrument field or number, still applies it. A column's `OFF` releases its held voices. A
+/// note-off or release-all message reaches only the note keys' voices, so no message cuts the song.
+/// A stop releases the held voices the columns own, and a stop while stopped fades out every voice
+/// over 5 ms. After each render call the play position is written as one packed value, which
+/// `play_position()` reads on any thread.
+///
 /// The player keeps one `Pcg32`, seeded from the song part's seed on stream 0 when the player is
-/// created and whenever a change set brings a song part with a different seed. Each note-on splits
-/// the new voice's noise generator from it, so voices' noise is uncorrelated, and the output
-/// depends only on the song and the control messages.
+/// created, whenever a change set brings a song part with a different seed, and at every play.
+/// Each note-on splits the new voice's noise generator from it, so voices' noise is uncorrelated,
+/// and the output depends only on the song and the control messages. The note keys draw from the
+/// same generator, so a song played from its start sounds the same every time, unless notes are
+/// played over it.
 ///
 /// A note-on with every voice sounding steals one, as `choose_voice()` chooses: the oldest in its
 /// release, or else the quietest, or else the oldest. The stolen voice fades out over 5 ms in one
@@ -163,9 +191,9 @@ class Player {
     /// Frees the EngineSong's parts, and every change set still waiting in either queue.
     ~Player();
 
-    /// Queues a note-on: a free voice starts playing the note on an instrument at `frame`. With no
-    /// voice free, the note steals one, which fades out. An instrument number that is empty at the
-    /// frame plays nothing.
+    /// Queues a note-on: a free voice starts playing the note on an instrument at `frame`, owned by
+    /// the note keys. With no voice free, the note steals one, which fades out. An instrument
+    /// number that is empty at the frame plays nothing.
     ///
     /// Call it on the control thread, with frames that never go backwards from one control
     /// message to the next, which is checked where `NDEBUG` isn't defined.
@@ -177,8 +205,8 @@ class Player {
     /// \return Whether the message was queued. A full queue refuses it and changes nothing.
     [[nodiscard]] bool note_on(std::uint64_t frame, int note, float velocity, int instrument);
 
-    /// Queues a note-off: every held voice playing the note on the instrument starts its release
-    /// at `frame`.
+    /// Queues a note-off: every held voice of the note keys playing the note on the instrument
+    /// starts its release at `frame`.
     ///
     /// Call it on the control thread, as `note_on()`.
     ///
@@ -188,7 +216,7 @@ class Player {
     /// \return Whether the message was queued. A full queue refuses it and changes nothing.
     [[nodiscard]] bool note_off(std::uint64_t frame, int note, int instrument);
 
-    /// Queues a release-all: every held voice starts its release at `frame`.
+    /// Queues a release-all: every held voice of the note keys starts its release at `frame`.
     ///
     /// Call it on the control thread, as `note_on()`.
     ///
@@ -209,6 +237,41 @@ class Player {
     ///                message is queued, and leaves it as it was if not.
     /// \return Whether the message was queued. A full queue refuses it and changes nothing.
     [[nodiscard]] bool change(std::uint64_t frame, ChangeSetPtr& changes);
+
+    /// Queues a play: the line of the slot starts exactly at `frame`, which becomes the
+    /// sequencer's anchor, and the generator is reseeded from the song part's seed. Notes started
+    /// before the line don't sound. A play while playing first does what a stop does, at the same
+    /// frame. A slot past the sequence's end plays slot 0, and a line past its pattern's end ends
+    /// its slot at once.
+    ///
+    /// Call it on the control thread, as `note_on()`.
+    ///
+    /// \param frame The frame at which the line starts.
+    /// \param slot The slot, from 0 to 999, which is checked.
+    /// \param line The line, from 0 to 511, which is checked.
+    /// \param loop Whether the slot loops, going back to its line 0 at its pattern's end.
+    /// \return Whether the message was queued. A full queue refuses it and changes nothing.
+    [[nodiscard]] bool play(std::uint64_t frame, int slot, int line, bool loop);
+
+    /// Queues a set-loop: switches looping of the playing slot at `frame`. While stopped it changes
+    /// nothing.
+    ///
+    /// Call it on the control thread, as `note_on()`.
+    ///
+    /// \param frame The frame at which looping switches.
+    /// \param loop Whether the slot loops.
+    /// \return Whether the message was queued. A full queue refuses it and changes nothing.
+    [[nodiscard]] bool set_loop(std::uint64_t frame, bool loop);
+
+    /// Queues a stop: at `frame` the song stops, and every held voice the note columns own starts
+    /// its release, so the tails ring out. A stop while stopped fades out every voice, the note
+    /// keys' included, over 5 ms.
+    ///
+    /// Call it on the control thread, as `note_on()`.
+    ///
+    /// \param frame The frame at which the song stops.
+    /// \return Whether the message was queued. A full queue refuses it and changes nothing.
+    [[nodiscard]] bool stop(std::uint64_t frame);
 
     /// Takes back the oldest change set the player has applied and not yet handed back. It holds
     /// the parts it replaced, which dropping it frees. Call it on the control thread, until it
@@ -232,6 +295,10 @@ class Player {
     ///         read on any thread.
     [[nodiscard]] std::uint32_t active_voices() const;
 
+    /// \return The play position at the end of the latest render call. It may be read on any
+    ///         thread.
+    [[nodiscard]] PlayPosition play_position() const;
+
   private:
     using Message = detail::ControlMessage;
 
@@ -245,6 +312,20 @@ class Player {
     // Applies a message, and returns whether it could: a change waits while the return queue is
     // full.
     [[nodiscard]] bool apply(const Message& message) IRAMA_NONBLOCKING;
+
+    // Plays the sequencer's notes due at the current frame.
+    void play_due_notes() IRAMA_NONBLOCKING;
+
+    // Plays one of the sequencer's notes on the voices its column owns.
+    void play_note(const SeqNote& note) IRAMA_NONBLOCKING;
+
+    // Starts a voice playing a note, owned by `owner`, at the instrument's pan or a fixed one,
+    // unless the instrument number is empty.
+    void start_voice(int note, float velocity, std::size_t number, std::uint16_t owner,
+                     std::optional<float> pan) IRAMA_NONBLOCKING;
+
+    // Releases every held voice the note columns own.
+    void release_columns() IRAMA_NONBLOCKING;
 
     // Swaps a change set's parts into the EngineSong, and hands their effects to the voices.
     void apply_changes(ChangeSet& changes) IRAMA_NONBLOCKING;
@@ -271,6 +352,8 @@ class Player {
     OwnedArray<Voice> voices_;
     // The instrument number of each voice's latest note.
     OwnedArray<std::uint8_t> voice_instruments_;
+    // Who owns each voice: the note keys, a note column, or nobody.
+    OwnedArray<std::uint16_t> voice_owners_;
     // The stolen voices fading out, and the instrument number of each.
     OwnedArray<Voice> fades_;
     OwnedArray<std::uint8_t> fade_instruments_;
@@ -278,6 +361,7 @@ class Player {
     std::uint64_t notes_started_ = 0;
     // The generator each note-on splits its voice's noise generator from.
     Pcg32 generator_;
+    SequencerPtr sequencer_;
     // Each voice's working, for one block.
     OwnedArray<float> scratch_;
     SpscQueue<Message, queue_capacity> queue_;
@@ -291,6 +375,7 @@ class Player {
     // How many frames the player has rendered, which only the audio thread reads.
     std::uint64_t frame_ = 0;
     std::atomic<std::uint32_t> active_voices_ = 0;
+    std::atomic<std::uint64_t> play_position_ = PlayPosition{}.pack();
 };
 
 } // namespace irama

@@ -18,8 +18,8 @@ namespace irama_studio {
 namespace {
 
 // The groups, in the order the window shows them.
-constexpr std::array<std::string_view, 5> group_titles{
-    "Oscillator", "Filter", "Amplifier", "Envelope", "Other",
+constexpr std::array<std::string_view, 6> group_titles{
+    "Oscillator", "Filter", "Amplifier", "Envelope", "Voice", "Other",
 };
 constexpr std::size_t oscillator_group = 0;
 constexpr std::size_t other_group = group_titles.size() - 1;
@@ -28,8 +28,9 @@ constexpr std::size_t other_group = group_titles.size() - 1;
 constexpr std::uint32_t first_source_id = 10'000;
 constexpr std::uint32_t block_width = 1'000;
 
-// The group a parameter's ID falls in: the source's blocks, then the filter's, the amplifier's and
-// the envelope's, which are the thousands from 1000 to 3999 in the order of their groups.
+// The group a parameter's ID falls in: the source's blocks, then the filter's, the amplifier's, the
+// envelope's and the voice's, which are the thousands from 1000 to 4999 in the order of their
+// groups.
 [[nodiscard]] std::size_t group_of(irama::ParamId id) {
     const std::uint32_t value = std::to_underlying(id);
     if (value >= first_source_id) {

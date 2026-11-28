@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <numbers>
 #include <span>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -50,6 +51,7 @@ struct Rendered {
     std::vector<float> sustain;
     std::vector<float> left_gain;
     std::vector<float> right_gain;
+    std::vector<float> gain;
     std::vector<float> osc_level;
     std::vector<float> pulse_width;
     std::vector<float> tuning;
@@ -84,6 +86,7 @@ template <typename Value> void append(std::vector<Value>& gathered, std::span<co
         append(rendered.sustain, block.sustain);
         append(rendered.left_gain, block.left_gain);
         append(rendered.right_gain, block.right_gain);
+        append(rendered.gain, block.gain);
         append(rendered.osc_level, block.osc_level);
         append(rendered.pulse_width, block.pulse_width);
         append(rendered.tuning, block.tuning);
@@ -154,6 +157,7 @@ constexpr auto basic_synth = std::to_array<Row>({
     {.id = 3'004, .min = -1, .max = 1},
     {.id = 3'005, .min = -1, .max = 1, .default_value = 0.5F},
     {.id = 3'006, .min = -1, .max = 1, .default_value = 0.5F},
+    {.id = 4'000, .max = 2, .scale = ParamScale::stepped},
 });
 
 [[nodiscard]] bool matches(const irama::ParamDescriptor& param, const Row& row) {
@@ -183,6 +187,50 @@ TEST_CASE("the instrument declares every parameter of the basic synth", "[voice]
     const auto& waveform = irama::instrument_params.at(index_of(InstrumentParam::osc1_waveform));
     REQUIRE(waveform.labels.size() == 4);
     REQUIRE(waveform.labels.subspan(2, 1).front() == "Saw");
+    const auto& action = irama::instrument_params.at(index_of(InstrumentParam::new_note_action));
+    REQUIRE(std::ranges::equal(action.labels,
+                               std::array<std::string_view, 3>{"Note-off", "Cut", "Continue"}));
+}
+
+TEST_CASE("the new note action follows its stepped value", "[voice]") {
+    irama::Instrument instrument{rate};
+    REQUIRE(instrument.new_note_action() == irama::NewNoteAction::note_off);
+    instrument.set(index_of(InstrumentParam::new_note_action), 1.0F, false);
+    REQUIRE(instrument.new_note_action() == irama::NewNoteAction::cut);
+    instrument.set(index_of(InstrumentParam::new_note_action), 2.0F, false);
+    REQUIRE(instrument.new_note_action() == irama::NewNoteAction::carry_on);
+}
+
+TEST_CASE("the amplifier's gain before the pan is its decibels as a linear gain", "[voice]") {
+    irama::Instrument instrument{rate};
+    instrument.set(index_of(InstrumentParam::pan), 0.5F, false);
+    const auto rendered = render(instrument, 300);
+    const float linear = std::pow(10.0F, -12.0F / 20.0F);
+    const auto [left_pan, right_pan] = irama::pan_gains(0.5F);
+    for (std::size_t frame = 0; frame < 300; ++frame) {
+        REQUIRE(rendered.gain.at(frame) == linear);
+        REQUIRE(rendered.left_gain.at(frame) == linear * left_pan);
+        REQUIRE(rendered.right_gain.at(frame) == linear * right_pan);
+    }
+}
+
+TEST_CASE("while the amplifier glides, its left and right gains are its gain times the pan's",
+          "[voice]") {
+    irama::Instrument instrument{rate};
+    instrument.set(index_of(InstrumentParam::pan), 0.5F, false);
+    static_cast<void>(render(instrument, 300));
+    const float linear = std::pow(10.0F, -12.0F / 20.0F);
+    instrument.set(index_of(InstrumentParam::gain), 0.0F, true);
+    instrument.set(index_of(InstrumentParam::pan), -0.5F, true);
+    const auto rendered = render(instrument, 1'000);
+    for (std::size_t frame = 0; frame < 1'000; ++frame) {
+        REQUIRE(rendered.gain.at(frame) > linear);
+        REQUIRE(rendered.gain.at(frame) <= 1.0F);
+    }
+    REQUIRE(rendered.gain.back() == 1.0F);
+    const auto [last_left, last_right] = irama::pan_gains(-0.5F);
+    REQUIRE(rendered.left_gain.back() == last_left);
+    REQUIRE(rendered.right_gain.back() == last_right);
 }
 
 TEST_CASE("an instrument starts with every parameter at its default", "[voice]") {

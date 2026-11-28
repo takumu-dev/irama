@@ -6,5 +6,5 @@
 irama_add_component(player
     HEADERS include/irama/engine/player/player.hpp
     SOURCES player.cpp
-    DEPENDS model voice param base
+    DEPENDS seq model voice param base
 )

@@ -57,6 +57,8 @@ constexpr std::array<std::string_view, 2> labels{"Off", "On"};
         return "Amplifier";
     case 3:
         return "Envelope";
+    case 4:
+        return "Voice";
     default:
         return "Other";
     }
@@ -104,7 +106,7 @@ TEST_CASE("the instrument's parameters each appear once, in their block's group,
           "[studio][instrument]") {
     const std::vector<ParamGroup> groups = group_params(irama::instrument_params);
     CHECK(titles(groups) ==
-          std::vector<std::string_view>{"Oscillator", "Filter", "Amplifier", "Envelope"});
+          std::vector<std::string_view>{"Oscillator", "Filter", "Amplifier", "Envelope", "Voice"});
 
     for (const ParamDescriptor& descriptor : irama::instrument_params) {
         INFO(descriptor.name);
@@ -122,8 +124,8 @@ TEST_CASE("the instrument's parameters each appear once, in their block's group,
 TEST_CASE("groups come in a fixed order, keep their table's order, and leave none out",
           "[studio][instrument]") {
     static constexpr std::array table{
-        param(2'001),  param(10'090), param(7'000), param(3'000),
-        param(10'000), param(2'000),  param(1'500), param(20'000),
+        param(2'001), param(10'090), param(7'000),  param(3'000), param(10'000),
+        param(2'000), param(1'500),  param(20'000), param(4'000),
     };
     const std::vector<ParamGroup> groups = group_params(table);
     const std::vector<ParamGroup> expected{
@@ -131,6 +133,7 @@ TEST_CASE("groups come in a fixed order, keep their table's order, and leave non
         {.title = "Filter", .params = {&table.at(6)}},
         {.title = "Amplifier", .params = {&table.at(0), &table.at(5)}},
         {.title = "Envelope", .params = {&table.at(3)}},
+        {.title = "Voice", .params = {&table.at(8)}},
         {.title = "Other", .params = {&table.at(2)}},
     };
     CHECK(groups == expected);
