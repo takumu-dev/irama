@@ -32,16 +32,6 @@ std::optional<NoteMessage> NoteKeys::press(int key, bool repeat) {
     if (repeat || !index || held_notes_.at(*index)) {
         return std::nullopt;
     }
-    switch (octave_key(key)) {
-    case OctaveKey::lower:
-        set_octave(octave_ - 1);
-        return std::nullopt;
-    case OctaveKey::raise:
-        set_octave(octave_ + 1);
-        return std::nullopt;
-    case OctaveKey::none:
-        break;
-    }
     const std::optional note = note_for_key(key, octave_);
     if (!note) {
         return std::nullopt;

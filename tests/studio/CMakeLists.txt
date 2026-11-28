@@ -12,6 +12,7 @@ add_executable(irama_studio_tests
     instrument_layout_tests.cpp
     instrument_values_tests.cpp
     key_map_tests.cpp
+    key_router_tests.cpp
     message_backlog_tests.cpp
     meter_display_tests.cpp
     note_keys_tests.cpp
@@ -19,6 +20,8 @@ add_executable(irama_studio_tests
     param_text_tests.cpp
     play_tests.cpp
     settings_tests.cpp
+    shortcut_actions_tests.cpp
+    shortcut_table_tests.cpp
     video_drivers_tests.cpp
 )
 target_link_libraries(irama_studio_tests PRIVATE irama_studio_core irama_catch_main)

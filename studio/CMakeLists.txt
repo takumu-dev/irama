@@ -38,14 +38,18 @@ add_library(irama_studio_core STATIC
     src/app/config_files.cpp
     src/app/options.cpp
     src/app/settings.cpp
+    src/app/shortcut_actions.cpp
     src/audio/audio_device.cpp
     src/audio/audio_engine.cpp
     src/audio/create_player.cpp
     src/audio/device_choice.cpp
     src/audio/instrument_values.cpp
     src/audio/miniaudio.cpp
+    src/input/chord.cpp
     src/input/key_map.cpp
+    src/input/key_router.cpp
     src/input/note_keys.cpp
+    src/input/shortcut_table.cpp
     src/ui/fonts.cpp
     src/ui/param_text.cpp
     src/ui/theme.cpp

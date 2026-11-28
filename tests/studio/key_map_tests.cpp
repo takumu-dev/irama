@@ -6,6 +6,7 @@
 #include <catch2/catch_message.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <optional>
@@ -24,7 +25,6 @@ constexpr int key_slash = 56;
 constexpr int key_space = 44;
 constexpr int key_left_bracket = 47;
 constexpr int key_keypad_divide = 84;
-constexpr int key_keypad_multiply = 85;
 
 [[nodiscard]] constexpr int letter(char name) { return key_a + (name - 'A'); }
 
@@ -122,10 +122,10 @@ TEST_CASE("keys off the piano rows play nothing", "[studio][keys]") {
     }
 }
 
-TEST_CASE("numpad / lowers the keyboard octave and numpad * raises it", "[studio][keys]") {
-    using irama_studio::OctaveKey;
-    CHECK(irama_studio::octave_key(key_keypad_divide) == OctaveKey::lower);
-    CHECK(irama_studio::octave_key(key_keypad_multiply) == OctaveKey::raise);
-    CHECK(irama_studio::octave_key(key_slash) == OctaveKey::none);
-    CHECK(irama_studio::octave_key(letter('Z')) == OctaveKey::none);
+TEST_CASE("the note keys type the characters a US keyboard prints on them", "[studio][keys]") {
+    constexpr std::u32string_view labels =
+        U"ZSXDCVGBHNJM,L.;/Q2W3ER5T6Y7UI9O0Pzsxdcvgbhnjmlqwertyuiop";
+    CHECK(std::ranges::all_of(labels, irama_studio::is_note_key_character));
+    constexpr std::u32string_view others = U"aF14[-= \u00E9";
+    CHECK(std::ranges::none_of(others, irama_studio::is_note_key_character));
 }

@@ -85,7 +85,7 @@ A device that stops playing, such as a USB device unplugged, gives way to the sy
 where that fails too, the Audio window's Reopen button tries again. The computer
 keyboard is a piano of two rows: `Z` to `/` from C of the keyboard octave, and `Q` to `P` from the
 octave above, by the keys' positions on a US keyboard, so every layout plays the same. Numpad `/`
-and `*`, or the buttons in the status bar, lower and raise the octave, from 0 to 8, so that at the
+and `*`, the Keyboard menu, or the buttons in the status bar, lower and raise the octave, from 0 to 8, so that at the
 default of 4, `Z` plays C-4.
 
 `IRAMA_REALTIME_GUARD` compiles in the real-time guard, which stops the program when code inside a

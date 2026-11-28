@@ -6,10 +6,12 @@
 #include "app/config_files.hpp"
 #include "app/options.hpp"
 #include "app/settings.hpp"
+#include "app/shortcut_actions.hpp"
 #include "audio/audio_engine.hpp"
 #include "audio/meter_display.hpp"
+#include "input/key_router.hpp"
 #include "input/note_keys.hpp"
-#include "input/note_message.hpp"
+#include "input/shortcut_table.hpp"
 #include "ui/flags.hpp"
 #include "ui/fonts.hpp"
 #include "ui/theme.hpp"
@@ -22,6 +24,7 @@
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_gpu.h>
 #include <SDL3/SDL_init.h>
+#include <SDL3/SDL_keyboard.h>
 #include <SDL3/SDL_keycode.h>
 #include <SDL3/SDL_messagebox.h>
 #include <SDL3/SDL_pixels.h>
@@ -195,31 +198,43 @@ class SettingsFiles {
     std::optional<DelayedFile> layout_file_;
 };
 
-// Whether a key going down may play a note or step the octave: not while ImGui takes typed text,
-// and not with Ctrl, Alt or Super held, which make the key a shortcut.
-[[nodiscard]] bool may_play(const SDL_KeyboardEvent& key) {
-    constexpr SDL_Keymod shortcut_modifiers = SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI;
-    return !ImGui::GetIO().WantTextInput && (key.mod & shortcut_modifiers) == 0;
+// The key event as the key router reads it. SDL's scancodes are USB HID usage IDs, which the note
+// keys and named keys are. The character comes from the key's keycode in the current layout with
+// no modifier held, where a keycode for a key that types a character is that character, and SDL
+// gives a layout with no Latin letters the US layout's.
+[[nodiscard]] KeyEvent key_event(const SDL_KeyboardEvent& key) {
+    const SDL_Keycode keycode = SDL_GetKeyFromScancode(key.scancode, SDL_KMOD_NONE, true);
+    return {
+        .key = static_cast<int>(key.scancode),
+        .character = (keycode & SDLK_SCANCODE_MASK) == 0 ? char32_t{keycode} : 0,
+        .modifiers =
+            {
+                .ctrl = (key.mod & SDL_KMOD_CTRL) != 0,
+                .alt = (key.mod & SDL_KMOD_ALT) != 0,
+                .shift = (key.mod & SDL_KMOD_SHIFT) != 0,
+            },
+        .super = (key.mod & SDL_KMOD_GUI) != 0,
+        .down = key.down,
+        .repeat = key.repeat,
+    };
 }
 
-// Plays a key going down or up on the note keys. SDL's scancodes are USB HID usage IDs, which the
-// note keys read. A key going up always ends the note it started.
-void handle_key(const SDL_KeyboardEvent& key, NoteKeys& keys, AudioEngine& engine) {
-    const int usage_id = static_cast<int>(key.scancode);
-    std::optional<NoteMessage> message;
-    if (!key.down) {
-        message = keys.release(usage_id);
-    } else if (may_play(key)) {
-        message = keys.press(usage_id, key.repeat);
+// Routes a key going down or up: runs its shortcut, or sends its note message. A text field takes
+// the key while ImGui takes typed text.
+void handle_key(const SDL_KeyboardEvent& key, KeyRouter& router, AudioEngine& engine) {
+    const KeyFocus focus{.text_field = ImGui::GetIO().WantTextInput};
+    const RoutedKey routed = router.route(key_event(key), focus);
+    if (routed.shortcut) {
+        run_shortcut(*routed.shortcut, router.note_keys());
     }
-    if (message) {
-        engine.send(*message);
+    if (routed.note) {
+        engine.send(*routed.note);
     }
 }
 
 // Handles the events waiting in SDL's queue, and returns false once the user has asked to quit.
 [[nodiscard]] bool handle_events(SDL_Window* window, float font_size, Settings& settings,
-                                 SettingsFiles& files, NoteKeys& keys, AudioEngine& engine) {
+                                 SettingsFiles& files, KeyRouter& router, AudioEngine& engine) {
     bool keep_running = true;
     SDL_Event event{};
     while (SDL_PollEvent(&event)) {
@@ -229,10 +244,12 @@ void handle_key(const SDL_KeyboardEvent& key, NoteKeys& keys, AudioEngine& engin
         if (event.type == SDL_EVENT_QUIT || closed) {
             keep_running = false;
         } else if (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) {
-            handle_key(event.key, keys, engine);
+            handle_key(event.key, router, engine);
+        } else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+            router.pointer_pressed();
         } else if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
             // The keys still held will go up where Studio can't see them.
-            engine.send(keys.release_all());
+            engine.send(router.release_all());
         } else if (event.type == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED) {
             apply_theme(content_scale(window), font_size);
         } else if (event.type == SDL_EVENT_WINDOW_RESIZED ||
@@ -381,7 +398,8 @@ int run(const Options& options) {
     // With no device, Studio runs silent, and the Audio window says why.
     AudioEngine engine{studio_backends};
     static_cast<void>(engine.open(settings.audio_device, settings.buffer_size));
-    NoteKeys keys{settings.octave};
+    KeyRouter router{shortcut_table(), settings.octave};
+    NoteKeys& keys = router.note_keys();
     MeterDisplay meters;
 
     Workspace workspace;
@@ -395,7 +413,7 @@ int run(const Options& options) {
         if ((SDL_GetWindowFlags(window) & hidden) != 0) {
             SDL_WaitEventTimeout(nullptr, hidden_wait_ms);
         }
-        if (!handle_events(window, font_size, settings, files, keys, engine)) {
+        if (!handle_events(window, font_size, settings, files, router, engine)) {
             running = false;
         }
         engine.flush();
@@ -415,6 +433,9 @@ int run(const Options& options) {
         }
         ImGui::Render();
         render(device, window);
+        if (const std::optional chosen = workspace.chosen_shortcut()) {
+            run_shortcut(*chosen, keys);
+        }
 
         const DelayedFile::Clock::time_point now = DelayedFile::Clock::now();
         update_audio(workspace.audio_window(), settings, files, keys, engine, now);
