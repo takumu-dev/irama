@@ -3,13 +3,14 @@
 
 #include "views/instrument_window.hpp"
 
-#include "audio/audio_engine.hpp"
+#include "app/song_editor.hpp"
+#include "doc/document.hpp"
+#include "doc/edits.hpp"
 #include "ui/flags.hpp"
 #include "ui/param_text.hpp"
 #include "views/instrument_layout.hpp"
 #include <irama/engine/base/narrow.hpp>
 #include <irama/engine/param/param_descriptor.hpp>
-#include <irama/engine/voice/instrument.hpp>
 
 #include <imgui.h>
 
@@ -68,29 +69,47 @@ namespace {
 
 } // namespace
 
-InstrumentWindow::InstrumentWindow() : groups_(group_params(irama::instrument_params)) {}
+InstrumentWindow::InstrumentWindow() : groups_(group_params(instrument_table())) {}
 
-void InstrumentWindow::draw(bool& open, AudioEngine& engine) {
+void InstrumentWindow::draw(bool& open, SongEditor& editor, AudioEngine& engine) {
     if (!open) {
         return;
     }
     if (ImGui::Begin(instrument_window_title, &open)) {
-        for (const ParamGroup& group : groups_) {
-            const std::string title{group.title};
-            if (!ImGui::CollapsingHeader(title.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
-                continue;
-            }
-            for (const irama::ParamDescriptor* const param : group.params) {
-                ImGui::PushID(param);
-                const float value = engine.parameters().value(param->id);
-                if (const std::optional<float> changed = draw_param(*param, value)) {
-                    engine.set_parameter(param->id, *changed);
-                }
-                ImGui::PopID();
-            }
+        const std::optional<Instrument>& instrument =
+            editor.document().instrument(edited_instrument);
+        if (!instrument) {
+            ImGui::TextDisabled("Instrument %02zX is empty", edited_instrument);
+        } else {
+            draw_groups(*instrument, editor, engine);
         }
     }
     ImGui::End();
+}
+
+void InstrumentWindow::draw_groups(const Instrument& instrument, SongEditor& editor,
+                                   AudioEngine& engine) {
+    for (const ParamGroup& group : groups_) {
+        const std::string title{group.title};
+        if (!ImGui::CollapsingHeader(title.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+            continue;
+        }
+        for (const irama::ParamDescriptor* const param : group.params) {
+            ImGui::PushID(param);
+            // A slider's drag is one gesture, from press to release. A label chosen or a value
+            // typed is a gesture of its own.
+            const bool one_shot = typing_ == param->id || widget_for(*param) == ParamWidget::combo;
+            const std::optional<float> changed = draw_param(*param, instrument.value(param->id));
+            const bool released = ImGui::IsItemDeactivated();
+            if (changed) {
+                editor.apply(set_instrument_value(edited_instrument, param->id, *changed), engine);
+            }
+            if (released || (changed && one_shot)) {
+                editor.end_gesture();
+            }
+            ImGui::PopID();
+        }
+    }
 }
 
 std::optional<float> InstrumentWindow::draw_param(const irama::ParamDescriptor& param,

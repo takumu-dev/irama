@@ -50,6 +50,10 @@ void draw_status_bar(StatusBar& bar) {
             ImGui::Separator();
             ImGui::TextColored(clip_color, "CLIP");
         }
+        if (!bar.refusal.empty()) {
+            ImGui::Separator();
+            ImGui::TextUnformatted(bar.refusal.c_str());
+        }
         ImGui::EndMenuBar();
     }
     ImGui::End();

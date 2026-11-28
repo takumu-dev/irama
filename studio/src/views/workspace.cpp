@@ -3,6 +3,8 @@
 
 #include "views/workspace.hpp"
 
+#include "app/song_editor.hpp"
+#include "doc/undo_history.hpp"
 #include "input/key_map.hpp"
 #include "input/shortcut_table.hpp"
 #include "views/about.hpp"
@@ -15,6 +17,7 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace irama_studio {
 namespace {
@@ -44,9 +47,38 @@ void build_default_layout(ImGuiID dock_space) {
     return ImGui::MenuItem(name.c_str(), chords_text(shortcut).c_str(), false, enabled);
 }
 
+// The Edit menu's entry for undo or redo, named after the step it would take, as in "Undo Set
+// Cutoff", and returns whether the user chose it. Its ID stays the same whatever the step.
+[[nodiscard]] bool step_menu_item(ShortcutId id, std::optional<std::string_view> step) {
+    const Shortcut& shortcut = find_shortcut(id);
+    std::string label{shortcut.name};
+    if (step) {
+        label += ' ';
+        label += *step;
+    }
+    label += "###";
+    label += shortcut.name;
+    return ImGui::MenuItem(label.c_str(), chords_text(shortcut).c_str(), false, step.has_value());
+}
+
+// The Edit menu, and the shortcut the user chose from it, if any.
+[[nodiscard]] std::optional<ShortcutId> draw_edit_menu(const UndoHistory& history) {
+    std::optional<ShortcutId> chosen;
+    if (ImGui::BeginMenu("Edit")) {
+        if (step_menu_item(ShortcutId::undo, history.undo_name())) {
+            chosen = ShortcutId::undo;
+        }
+        if (step_menu_item(ShortcutId::redo, history.redo_name())) {
+            chosen = ShortcutId::redo;
+        }
+        ImGui::EndMenu();
+    }
+    return chosen;
+}
+
 } // namespace
 
-bool Workspace::draw(StatusBar& status, AudioEngine& engine) {
+bool Workspace::draw(StatusBar& status, AudioEngine& engine, SongEditor& editor) {
     bool keep_running = true;
     chosen_shortcut_.reset();
     if (ImGui::BeginMainMenuBar()) {
@@ -55,6 +87,9 @@ bool Workspace::draw(StatusBar& status, AudioEngine& engine) {
                 keep_running = false;
             }
             ImGui::EndMenu();
+        }
+        if (const std::optional<ShortcutId> chosen = draw_edit_menu(editor.history())) {
+            chosen_shortcut_ = chosen;
         }
         if (ImGui::BeginMenu("View")) {
             ImGui::MenuItem(instrument_window_title, nullptr, &instrument_open_);
@@ -87,7 +122,7 @@ bool Workspace::draw(StatusBar& status, AudioEngine& engine) {
     }
     ImGui::DockSpaceOverViewport(dock_space);
 
-    instrument_.draw(instrument_open_, engine);
+    instrument_.draw(instrument_open_, editor, engine);
     draw_audio_window(audio_open_, audio_window_, engine);
     draw_about(about_open_);
     return keep_running;

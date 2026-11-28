@@ -11,6 +11,7 @@
 
 #include <array>
 #include <optional>
+#include <span>
 #include <utility>
 
 using irama_studio::Chord;
@@ -144,7 +145,8 @@ TEST_CASE("a chord matches only with exactly its modifiers", "[studio][router]")
 }
 
 TEST_CASE("the note keys play nothing while Ctrl, Alt or Super is held", "[studio][router]") {
-    KeyRouter router;
+    // With no shortcuts, Ctrl+Z is a note key held with Ctrl, rather than undo.
+    KeyRouter router{std::span<const Shortcut>{}};
     CHECK(router.route(press(key_z, U'z', ctrl), no_text_field) == nothing);
     CHECK(router.route(press(key_z, U'z', {.alt = true}), no_text_field) == nothing);
     KeyEvent with_super = press(key_z, U'z');

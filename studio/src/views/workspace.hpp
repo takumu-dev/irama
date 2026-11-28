@@ -12,6 +12,7 @@
 namespace irama_studio {
 
 class AudioEngine;
+class SongEditor;
 struct StatusBar;
 
 /// Everything Studio's main window shows: the main menu bar, the dock space that fills the window
@@ -21,9 +22,10 @@ class Workspace {
     /// Draws one frame of the workspace, and returns false once the user has chosen to quit.
     ///
     /// \param status What the status bar shows, and where it puts what the user asks of it.
-    /// \param engine The audio engine, which the Audio window describes and the Instrument window
-    ///               changes the instrument's values through.
-    [[nodiscard]] bool draw(StatusBar& status, AudioEngine& engine);
+    /// \param engine The audio engine, which the Audio window describes and every edit sends the
+    ///               parts it changes.
+    /// \param editor The song, which the Instrument window edits and the Edit menu steps through.
+    [[nodiscard]] bool draw(StatusBar& status, AudioEngine& engine, SongEditor& editor);
 
     /// \return The Audio window, with what the user asked of it on the latest frame.
     [[nodiscard]] const AudioWindow& audio_window() const { return audio_window_; }
