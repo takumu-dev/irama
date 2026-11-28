@@ -32,6 +32,8 @@ constexpr std::uint32_t channels = 2;
         return ma_backend_pulseaudio;
     case AudioBackend::alsa:
         return ma_backend_alsa;
+    case AudioBackend::wasapi:
+        return ma_backend_wasapi;
     case AudioBackend::null:
         return ma_backend_null;
     }
@@ -44,6 +46,8 @@ constexpr std::uint32_t channels = 2;
         return AudioBackend::pulseaudio;
     case ma_backend_alsa:
         return AudioBackend::alsa;
+    case ma_backend_wasapi:
+        return AudioBackend::wasapi;
     case ma_backend_null:
         return AudioBackend::null;
     default:
@@ -81,6 +85,8 @@ std::string_view backend_name(AudioBackend backend) {
         return "PulseAudio";
     case AudioBackend::alsa:
         return "ALSA";
+    case AudioBackend::wasapi:
+        return "WASAPI";
     case AudioBackend::null:
         return "Null";
     }

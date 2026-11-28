@@ -8,7 +8,8 @@
 #
 # Every Linux job runs in the image built from ci/linux/, which the `image` job builds and pushes
 # when its tag is missing. The Windows job runs on CircleCI's Windows Server image, at a dated tag,
-# which the scripts in ci/windows/ set up with MSVC.
+# which the scripts in ci/windows/ set up with MSVC. It is the image with a desktop, on which
+# Studio's smoke test opens its window, drawn by Direct3D 12 on WARP since the machine has no GPU.
 #
 # A Windows minute costs far more than a Linux one, so the Windows job runs on pull requests and on
 # Monday's schedule, and doesn't repeat when a branch that passed it merges into develop or main.

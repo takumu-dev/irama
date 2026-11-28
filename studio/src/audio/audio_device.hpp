@@ -18,6 +18,7 @@ namespace irama_studio {
 enum class AudioBackend : std::uint8_t {
     pulseaudio,
     alsa,
+    wasapi,
     /// A device with no hardware behind it, driven by a timer, for tests.
     null,
 };

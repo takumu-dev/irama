@@ -36,10 +36,14 @@ constexpr const char* directory_name = "irama";
 } // namespace
 
 Environment read_environment() {
+#ifdef _WIN32
+    return Environment{.appdata = environment_variable("APPDATA")};
+#else
     return Environment{
         .xdg_config_home = environment_variable("XDG_CONFIG_HOME"),
         .home = environment_variable("HOME"),
     };
+#endif
 }
 
 std::optional<std::filesystem::path>
@@ -48,8 +52,12 @@ config_directory(const std::optional<std::filesystem::path>& option,
     if (option) {
         return option;
     }
+    if (!environment.appdata.empty()) {
+        return std::filesystem::path{environment.appdata} / directory_name;
+    }
+    // An absolute path in the XDG specification's sense, which is a POSIX one, starts at the root.
     const std::filesystem::path config_home{environment.xdg_config_home};
-    if (config_home.is_absolute()) {
+    if (config_home.has_root_directory()) {
         return config_home / directory_name;
     }
     if (!environment.home.empty()) {
