@@ -3,8 +3,11 @@
 
 #pragma once
 
+#include "input/shortcut_table.hpp"
 #include "views/audio_window.hpp"
 #include "views/instrument_window.hpp"
+
+#include <optional>
 
 namespace irama_studio {
 
@@ -25,12 +28,16 @@ class Workspace {
     /// \return The Audio window, with what the user asked of it on the latest frame.
     [[nodiscard]] const AudioWindow& audio_window() const { return audio_window_; }
 
+    /// \return The shortcut whose menu entry the user chose on the latest frame, if any.
+    [[nodiscard]] std::optional<ShortcutId> chosen_shortcut() const { return chosen_shortcut_; }
+
   private:
     InstrumentWindow instrument_;
     bool instrument_open_ = true;
     bool audio_open_ = true;
     bool about_open_ = false;
     AudioWindow audio_window_;
+    std::optional<ShortcutId> chosen_shortcut_;
 };
 
 } // namespace irama_studio

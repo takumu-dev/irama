@@ -342,8 +342,8 @@ SDL_GPU, which on Linux runs on Vulkan. So running Studio on Linux needs a Vulka
 - **Docking.** Windows dock inside the main window only, in a dock space that fills it between the
   main menu bar and the status bar. ImGui's windows of their own, outside the main window, are off:
   they work only under some of SDL's video drivers, and never on native Wayland.
-- **The default layout**: File (Quit), View (one toggle for each window) and Help (About) in the
-  main menu bar; the Instrument window docked on the left, at two thirds of the width, and the Audio
+- **The default layout**: File (Quit), View (one toggle for each window), Keyboard (Lower and
+  Raise keyboard octave) and Help (About) in the main menu bar; the Instrument window docked on the left, at two thirds of the width, and the Audio
   window on the right; and the status bar along the bottom, with the keyboard octave between a −
   and a + button, the voice count, the CPU meter, and a red CLIP for one second after the last
   clipped sample. Studio builds the layout only when there is no saved one.
@@ -440,15 +440,16 @@ SDL's scancodes are, so the piano rows are the same keys on every keyboard layou
 octave O, the lower row `Z S X D C V G B H N J M` plays C to B of O and `, L . ; /` C to E of O+1,
 and the upper row `Q 2 W 3 E R 5 T 6 Y 7 U` plays C to B of O+1 and `I 9 O 0 P` C to E of O+2, as
 a US keyboard labels the keys. The octave runs from 0 to 8, 4 by default, so `Z` plays C-4, and a
-key whose note would pass B-9 plays nothing. Numpad `/` lowers it and Numpad `*` raises it.
+key whose note would pass B-9 plays nothing. Numpad `/` lowers it and Numpad `*` raises it, as
+shortcuts.
 
 - Every note key plays at velocity 1, and key repeats are ignored.
 - A key's note is remembered when it goes down, so a key released after an octave change ends the
   note it started. A note-off releases every voice on its note, so the held keys are counted for
   each note, and only the release of the last key holding a note sends its note-off.
-- A key going down plays nothing while ImGui takes typed text, or while Ctrl, Alt or Super is held.
-  A key going up always ends its note. When the window loses focus, Studio sends release-all and
-  forgets the held keys.
+- A key going down plays nothing while ImGui takes typed text, while it runs a shortcut, or while
+  Ctrl, Alt or Super is held. A key going up always ends its note. When the window loses focus,
+  Studio sends release-all and forgets the held keys.
 - Studio's messages name frame 0, so each applies at the start of the player's next render call.
   A message the player's queue refuses waits in a backlog on the UI thread, and the backlog is sent
   first, in order, before any new message and again each frame. With no device open there is no
@@ -458,6 +459,43 @@ So Studio runs three kinds of thread: the UI thread, which handles events, draws
 call on the device, the engine and the player's control functions; the device's thread, miniaudio's
 own, which runs the callback; and the backend's threads, such as PulseAudio's, which Studio never
 touches.
+
+### Shortcuts and the key router
+
+Every Studio key that runs a named function is a shortcut, an entry in one table in
+`studio/src/input/shortcut_table.cpp`. An entry holds an ID, the name the menus show, a context and
+one or more chords. The menus show each entry's chords from the table, and choosing an entry runs the
+same function as its chords, through `run_shortcut()`. Like the note keys, the table includes no
+SDL or ImGui header.
+
+- **Chords.** A chord is a named key, or the character a key types in the current layout, with
+  Ctrl, Alt and Shift, each meaning either side's key. A named key is one whose place and meaning
+  are the same on every layout, such as Space, the arrows, the F-keys and the numpad, and is its USB
+  HID usage ID. A character is matched in the current layout, so Ctrl+Z is on whichever key types
+  Z, while the note keys stay where they are: SDL gives the key's character with no modifier, and
+  gives a layout with no Latin letters the US layout's. Super is in no chord.
+- **Contexts.** A global shortcut works whichever window has focus. A Pattern or Sequence shortcut
+  works only while that window has focus. Shortcuts whose contexts overlap, a global one with any
+  other or two in one context, never share a chord.
+- **Unmodified chords.** Plain letters, digits and punctuation belong to the note keys and to
+  entry, so a chord with no modifier may use only Space, Enter, Esc, Tab, the arrows, Page Up and
+  Page Down, Home and End, Insert, Delete and Backspace, the F-keys, the numpad, Scroll Lock and the
+  lone modifiers. No unmodified chord sits on a note key or a character the note keys type.
+- **Lone modifiers.** Right Ctrl and Right Alt may each be a chord alone, the only chords that name
+  a side. Such a shortcut runs when the key goes up, and only if no other key was held when it went
+  down and no other key or mouse button went down while it was held. So Right Ctrl+Z is Ctrl+Z
+  alone, and Right Alt works as a lone key on layouts where it is AltGr.
+
+One router, `KeyRouter`, sends each key where it belongs, and the first rule that applies wins:
+
+1. While a text field has focus (ImGui's `WantTextInput`), it takes every key.
+2. A key that matches a chord of a shortcut in force runs that shortcut. A held key's repeats run
+   nothing.
+3. Otherwise the key goes to the note keys.
+
+A key going up always reaches the note keys, so a held note key ends its note whatever was pressed
+while it was held. Tests check the table itself: that every chord is one Studio allows, that no
+unmodified chord sits on a note key, and that no two shortcuts whose contexts overlap share a chord.
 
 ### The Instrument window
 
@@ -489,7 +527,7 @@ open, a change only updates the copy.
 
 `irama_studio_core` is laid out in folders, which are not targets of their own: `app/` (the loop,
 the window, the command line, the settings), `audio/` (the device, the engine, its meters and
-Studio's copy of the instrument's values), `input/` (the note keys), `ui/` (the theme, the font, the
+Studio's copy of the instrument's values), `input/` (the note keys, the shortcut table and the key router), `ui/` (the theme, the font, the
 values' text and helpers) and `views/` (what the window shows). `irama-studio` is `main.cpp` alone.
 Studio's tests are one Catch2 program, `irama_studio_tests` in `tests/studio/`, which tests what
 needs no window. One of its tests checks that SDL was built with its `wayland`, `x11` and

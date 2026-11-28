@@ -3,6 +3,8 @@
 
 #include "views/workspace.hpp"
 
+#include "input/key_map.hpp"
+#include "input/shortcut_table.hpp"
 #include "views/about.hpp"
 #include "views/audio_window.hpp"
 #include "views/instrument_window.hpp"
@@ -10,6 +12,9 @@
 
 #include <imgui.h>
 #include <imgui_internal.h>
+
+#include <optional>
+#include <string>
 
 namespace irama_studio {
 namespace {
@@ -31,10 +36,19 @@ void build_default_layout(ImGuiID dock_space) {
     ImGui::DockBuilderFinish(dock_space);
 }
 
+// A menu entry for a shortcut, showing its name and its chords from the shortcut table, and
+// returns whether the user chose it.
+[[nodiscard]] bool shortcut_menu_item(ShortcutId id, bool enabled) {
+    const Shortcut& shortcut = find_shortcut(id);
+    const std::string name{shortcut.name};
+    return ImGui::MenuItem(name.c_str(), chords_text(shortcut).c_str(), false, enabled);
+}
+
 } // namespace
 
 bool Workspace::draw(StatusBar& status, AudioEngine& engine) {
     bool keep_running = true;
+    chosen_shortcut_.reset();
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("File")) {
             if (ImGui::MenuItem("Quit")) {
@@ -45,6 +59,15 @@ bool Workspace::draw(StatusBar& status, AudioEngine& engine) {
         if (ImGui::BeginMenu("View")) {
             ImGui::MenuItem(instrument_window_title, nullptr, &instrument_open_);
             ImGui::MenuItem(audio_window_title, nullptr, &audio_open_);
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Keyboard")) {
+            if (shortcut_menu_item(ShortcutId::lower_octave, status.octave > min_octave)) {
+                chosen_shortcut_ = ShortcutId::lower_octave;
+            }
+            if (shortcut_menu_item(ShortcutId::raise_octave, status.octave < max_octave)) {
+                chosen_shortcut_ = ShortcutId::raise_octave;
+            }
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Help")) {

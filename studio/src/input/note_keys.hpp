@@ -34,8 +34,8 @@ class NoteKeys {
     /// Sets the keyboard octave, kept within its range. Held keys keep their notes.
     void set_octave(int octave);
 
-    /// Handles a key going down. A piano key that isn't already held sends a note-on, and numpad
-    /// `/` and `*` step the keyboard octave. A key repeat does nothing.
+    /// Handles a key going down. A piano key that isn't already held sends a note-on. A key repeat
+    /// does nothing.
     ///
     /// \param key The key's USB HID usage ID.
     /// \param repeat Whether the press is the key repeating while held.
