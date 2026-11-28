@@ -30,6 +30,13 @@ namespace {
 
 } // namespace
 
+#ifdef _WIN32
+TEST_CASE("SDL's video drivers include windows", "[studio]") {
+    const std::vector<std::string_view> drivers = compiled_video_drivers();
+    CAPTURE(drivers);
+    CHECK(std::ranges::contains(drivers, std::string_view{"windows"}));
+}
+#else
 TEST_CASE("SDL's video drivers include wayland, x11 and offscreen", "[studio]") {
     const std::vector<std::string_view> drivers = compiled_video_drivers();
     CAPTURE(drivers);
@@ -38,3 +45,4 @@ TEST_CASE("SDL's video drivers include wayland, x11 and offscreen", "[studio]") 
         CHECK(std::ranges::contains(drivers, driver));
     }
 }
+#endif

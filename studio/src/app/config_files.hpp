@@ -16,15 +16,18 @@ namespace irama_studio {
 struct Environment {
     std::string xdg_config_home{};
     std::string home{};
+    /// The Roaming application data folder, which Windows gives every user.
+    std::string appdata{};
 };
 
-/// Reads the environment variables that decide where Studio keeps its settings.
+/// Reads the environment variables that decide where Studio keeps its settings: `APPDATA` on
+/// Windows, and `XDG_CONFIG_HOME` and `HOME` elsewhere.
 [[nodiscard]] Environment read_environment();
 
 /// The directory that holds `studio.ini` and `imgui.ini`: the one `--config-dir` gives, or else
-/// `$XDG_CONFIG_HOME/irama`, or else `$HOME/.config/irama`. As the XDG base directory
-/// specification says, an `XDG_CONFIG_HOME` that isn't an absolute path is ignored. With none of
-/// them, there is no directory, and Studio keeps nothing.
+/// `irama` in `APPDATA`, or else `$XDG_CONFIG_HOME/irama`, or else `$HOME/.config/irama`. As the
+/// XDG base directory specification says, an `XDG_CONFIG_HOME` that isn't an absolute path is
+/// ignored. With none of them, there is no directory, and Studio keeps nothing.
 [[nodiscard]] std::optional<std::filesystem::path>
 config_directory(const std::optional<std::filesystem::path>& option,
                  const Environment& environment);

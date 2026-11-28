@@ -69,7 +69,7 @@
       "inherits": "windows",
       "$comment": [
         "Run from a developer command prompt for MSVC 14.52 or newer, which puts cl on the PATH and picks the architecture.",
-        "Studio is built and checked on Linux only, so these presets leave it out."
+        "These presets run neither clang-format nor Doxygen, so they never look for them, and an older one on the PATH, such as Visual Studio's own clang-format, can't stop the configuration."
       ],
       "architecture": {
         "value": "x64",
@@ -78,7 +78,8 @@
       "cacheVariables": {
         "CMAKE_C_COMPILER": "cl",
         "CMAKE_CXX_COMPILER": "cl",
-        "IRAMA_BUILD_STUDIO": false
+        "CMAKE_DISABLE_FIND_PACKAGE_Doxygen": true,
+        "IRAMA_CLANG_FORMAT": ""
       }
     },
     {
@@ -225,8 +226,11 @@
         "outputOnFailure": true,
         "outputJUnitFile": "junit.xml"
       },
+      "$comment": "With interactive debugging off, CTest turns off the system's error and crash dialogs for every test, and a test that hangs is stopped after 5 minutes.",
       "execution": {
-        "noTestsAction": "error"
+        "interactiveDebugging": false,
+        "noTestsAction": "error",
+        "timeout": 300
       }
     },
     { "name": "gcc-debug", "inherits": "test", "configurePreset": "gcc-debug" },
