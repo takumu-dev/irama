@@ -101,6 +101,11 @@ float Instrument::value(std::size_t index) const {
     return params_.at(index).value();
 }
 
+float Instrument::target(std::size_t index) const {
+    IRAMA_ASSERT(index < params_.size(), "a parameter's index is within the instrument's table");
+    return params_.at(index).target();
+}
+
 float Instrument::sample_rate() const { return sample_rate_; }
 
 Waveform Instrument::waveform() const {
@@ -132,16 +137,17 @@ float Instrument::velocity_gain(float velocity) const {
     return 1.0F - (sensitivity * (1.0F - (velocity * velocity)));
 }
 
-InstrumentBlock Instrument::render(std::size_t frames) IRAMA_NONBLOCKING {
+InstrumentBlock Instrument::render(InstrumentBuffers& buffers,
+                                   std::size_t frames) IRAMA_NONBLOCKING {
     IRAMA_ASSERT(frames <= max_block_frames, "an instrument computes at most one block at once");
-    const auto osc_levels = std::span{osc_level_}.first(frames);
-    const auto pulse_widths = std::span{pulse_width_}.first(frames);
-    const auto tunings = std::span{tuning_}.first(frames);
-    const auto noise_levels = std::span{noise_level_}.first(frames);
-    const auto filters = std::span{filter_}.first(frames);
-    const auto sustain_levels = std::span{sustain_}.first(frames);
-    const auto left = std::span{left_gain_}.first(frames);
-    const auto right = std::span{right_gain_}.first(frames);
+    const auto osc_levels = std::span{buffers.osc_level}.first(frames);
+    const auto pulse_widths = std::span{buffers.pulse_width}.first(frames);
+    const auto tunings = std::span{buffers.tuning}.first(frames);
+    const auto noise_levels = std::span{buffers.noise_level}.first(frames);
+    const auto filters = std::span{buffers.filter}.first(frames);
+    const auto sustain_levels = std::span{buffers.sustain}.first(frames);
+    const auto left = std::span{buffers.left_gain}.first(frames);
+    const auto right = std::span{buffers.right_gain}.first(frames);
 
     render_fraction(params_.at(osc1_level), osc_levels);
     render_fraction(params_.at(osc1_pulse_width), pulse_widths);
@@ -190,9 +196,7 @@ InstrumentBlock Instrument::render(std::size_t frames) IRAMA_NONBLOCKING {
     const FilterMode block_filter_mode = filter_mode();
     const FilterSlope block_filter_slope = filter_slope();
     const AdsrSettings settings = envelope();
-    for (ParamSmoother& param : params_) {
-        param.advance(frames);
-    }
+    advance(frames);
     return InstrumentBlock{
         .waveform = block_waveform,
         .osc_level = osc_levels,
@@ -207,6 +211,12 @@ InstrumentBlock Instrument::render(std::size_t frames) IRAMA_NONBLOCKING {
         .left_gain = left,
         .right_gain = right,
     };
+}
+
+void Instrument::advance(std::size_t frames) IRAMA_NONBLOCKING {
+    for (ParamSmoother& param : params_) {
+        param.advance(frames);
+    }
 }
 
 } // namespace irama

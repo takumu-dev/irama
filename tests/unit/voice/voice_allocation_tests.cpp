@@ -29,10 +29,11 @@ void advance(std::span<irama::Voice> voices, irama::Instrument& instrument, std:
     std::vector<float> out(irama::Instrument::max_block_frames * 2);
     std::vector<float> scratch(irama::Instrument::max_block_frames *
                                irama::Voice::scratch_per_frame);
+    irama::InstrumentBuffers buffers;
     while (frames > 0) {
         const std::size_t length = std::min(frames, irama::Instrument::max_block_frames);
         const irama::RenderScope scope;
-        const irama::InstrumentBlock block = instrument.render(length);
+        const irama::InstrumentBlock block = instrument.render(buffers, length);
         for (irama::Voice& voice : voices) {
             voice.render(std::span{out}.first(length * 2), scratch, block);
         }

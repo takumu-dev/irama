@@ -41,10 +41,11 @@ constexpr std::size_t release_frames = 9'600;
 
 // Renders as the player does, inside a render scope, so the real-time checks watch the voice: the
 // instrument's values for a block, then the voice.
-void render_block(irama::Voice& voice, irama::Instrument& instrument, std::span<float> out,
+void render_block(irama::Voice& voice, irama::Instrument& instrument,
+                  irama::InstrumentBuffers& buffers, std::span<float> out,
                   std::span<float> scratch) IRAMA_NONBLOCKING {
     const irama::RenderScope scope;
-    const irama::InstrumentBlock block = instrument.render(out.size() / 2);
+    const irama::InstrumentBlock block = instrument.render(buffers, out.size() / 2);
     voice.render(out, scratch, block);
 }
 
@@ -52,9 +53,10 @@ void render_block(irama::Voice& voice, irama::Instrument& instrument, std::span<
 void render(irama::Voice& voice, irama::Instrument& instrument, std::span<float> out) {
     std::vector<float> scratch(irama::Instrument::max_block_frames *
                                irama::Voice::scratch_per_frame);
+    irama::InstrumentBuffers buffers;
     while (!out.empty()) {
         const std::size_t length = std::min(out.size(), irama::Instrument::max_block_frames * 2);
-        render_block(voice, instrument, out.first(length), scratch);
+        render_block(voice, instrument, buffers, out.first(length), scratch);
         out = out.subspan(length);
     }
 }

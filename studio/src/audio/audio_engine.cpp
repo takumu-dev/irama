@@ -7,9 +7,11 @@
 #include "audio/create_player.hpp"
 #include "audio/device_choice.hpp"
 #include "audio/heartbeat_watch.hpp"
+#include "audio/message_backlog.hpp"
 #include "input/note_message.hpp"
 #include <irama/engine/base/nonblocking.hpp>
 #include <irama/engine/base/render_scope.hpp>
+#include <irama/engine/model/change_set.hpp>
 #include <irama/engine/param/param_id.hpp>
 #include <irama/engine/player/player.hpp>
 
@@ -25,6 +27,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace irama_studio {
@@ -131,22 +134,21 @@ void AudioEngine::close() {
 
 bool AudioEngine::is_open() const { return device_.is_open(); }
 
-void AudioEngine::send(const NoteMessage& message) {
-    if (player_) {
-        backlog_.send(message, [this](const NoteMessage& waiting) { return deliver(waiting); });
-    }
-}
+void AudioEngine::send(const NoteMessage& message) { send_message(message); }
 
 void AudioEngine::set_parameter(irama::ParamId id, float value) {
     parameters_.set(id, value);
-    send_parameters();
+    if (player_) {
+        send_message(instrument_change(parameters_));
+    }
 }
 
 void AudioEngine::flush() {
     if (player_) {
-        backlog_.flush([this](const NoteMessage& waiting) { return deliver(waiting); });
+        backlog_.flush([this](PlayerMessage& waiting) { return deliver(waiting); });
+        while (player_->take_returned() != nullptr) {
+        }
     }
-    send_parameters();
 }
 
 std::uint32_t AudioEngine::active_voices() const { return player_ ? player_->active_voices() : 0; }
@@ -196,20 +198,23 @@ void AudioEngine::render(std::span<float> out) IRAMA_NONBLOCKING {
     heartbeat_.fetch_add(1, std::memory_order_relaxed);
 }
 
-void AudioEngine::send_parameters() {
+void AudioEngine::send_message(PlayerMessage message) {
     if (player_) {
-        parameters_.flush([this](irama::ParamId id, float value) {
-            return player_->set_parameter(now_frame, id, value);
-        });
+        backlog_.send(std::move(message),
+                      [this](PlayerMessage& waiting) { return deliver(waiting); });
     }
 }
 
-bool AudioEngine::deliver(const NoteMessage& message) {
-    switch (message.kind) {
+bool AudioEngine::deliver(PlayerMessage& message) {
+    if (auto* changes = std::get_if<irama::ChangeSetPtr>(&message)) {
+        return player_->change(now_frame, *changes);
+    }
+    const auto& note = std::get<NoteMessage>(message);
+    switch (note.kind) {
     case NoteMessage::Kind::note_on:
-        return player_->note_on(now_frame, message.note, message.velocity);
+        return player_->note_on(now_frame, note.note, note.velocity, note.instrument);
     case NoteMessage::Kind::note_off:
-        return player_->note_off(now_frame, message.note);
+        return player_->note_off(now_frame, note.note, note.instrument);
     case NoteMessage::Kind::release_all:
         return player_->release_all(now_frame);
     }

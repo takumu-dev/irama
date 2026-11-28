@@ -2,10 +2,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "script.hpp"
+#include <irama/engine/base/allocator.hpp>
 #include <irama/engine/base/narrow.hpp>
 #include <irama/engine/base/nonblocking.hpp>
 #include <irama/engine/base/render_scope.hpp>
+#include <irama/engine/model/change_set.hpp>
+#include <irama/engine/model/instrument_part.hpp>
+#include <irama/engine/model/song_part.hpp>
+#include <irama/engine/param/param_descriptor.hpp>
+#include <irama/engine/param/param_id.hpp>
 #include <irama/engine/player/player.hpp>
+#include <irama/engine/voice/instrument.hpp>
 #include <irama/engine/wav/wav_writer.hpp>
 
 #include <algorithm>
@@ -19,6 +26,7 @@
 #include <ios>
 #include <iterator>
 #include <memory>
+#include <new>
 #include <numbers>
 #include <optional>
 #include <print>
@@ -26,6 +34,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 #ifdef _MSC_VER
@@ -247,17 +256,62 @@ struct SynthOptions {
     return options;
 }
 
+// A script plays its notes on this instrument, the only one its song has.
+constexpr int script_instrument = 0x01;
+
+// The one instrument a script plays, whose values its set-parameter lines change. Each change
+// reaches the player as a change set holding the whole instrument.
+class ScriptInstrument {
+  public:
+    ScriptInstrument() {
+        std::ranges::transform(irama::instrument_params, values_.begin(),
+                               &irama::ParamDescriptor::default_value);
+    }
+
+    // Sets one of the instrument's parameters, constrained to it, as the player would have.
+    void set(irama::ParamId id, float value) {
+        const std::optional<std::size_t> index = irama::find_param(irama::instrument_params, id);
+        if (index) {
+            values_.at(*index) = irama::instrument_params.at(*index).constrain(value);
+        }
+    }
+
+    // A change set of the instrument as it is now, and of the new song's song part if `with_song`.
+    [[nodiscard]] irama::ChangeSetPtr change(bool with_song) const {
+        const irama::Allocator allocator = irama::default_allocator();
+        auto changes = irama::ChangeSet::create(allocator, {.instruments = 1});
+        auto part = irama::InstrumentPart::create(allocator, values_);
+        auto song = irama::SongPart::create(allocator);
+        if (!changes || !part || !song) {
+            throw std::bad_alloc{};
+        }
+        (*changes)->replace_instrument(script_instrument, std::move(*part));
+        if (with_song) {
+            (*changes)->replace_song(std::move(*song));
+        }
+        return std::move(*changes);
+    }
+
+  private:
+    std::array<float, irama::instrument_params.size()> values_{};
+};
+
 // Queues one checked message of a script.
-[[nodiscard]] bool send(irama::Player& player, const ScriptMessage& message) {
+[[nodiscard]] bool send(irama::Player& player, ScriptInstrument& instrument,
+                        const ScriptMessage& message) {
     switch (message.kind) {
     case ScriptMessage::Kind::note_on:
-        return player.note_on(message.frame, message.note, message.velocity);
+        return player.note_on(message.frame, message.note, message.velocity, script_instrument);
     case ScriptMessage::Kind::note_off:
-        return player.note_off(message.frame, message.note);
+        return player.note_off(message.frame, message.note, script_instrument);
     case ScriptMessage::Kind::release_all:
         return player.release_all(message.frame);
-    case ScriptMessage::Kind::set_parameter:
-        return player.set_parameter(message.frame, message.param, message.value);
+    case ScriptMessage::Kind::set_parameter: {
+        // Setting the same value again changes nothing, so a refused line can be sent again.
+        instrument.set(message.param, message.value);
+        irama::ChangeSetPtr changes = instrument.change(false);
+        return player.change(message.frame, changes);
+    }
     }
     return false;
 }
@@ -283,6 +337,14 @@ int synth(const SynthOptions& options) {
         std::println(stderr, "irama-cli: out of memory");
         return failure;
     }
+    // The song: the new song's song part, and instrument 01 at every default, before anything
+    // renders.
+    ScriptInstrument instrument;
+    irama::ChangeSetPtr song = instrument.change(true);
+    if (!(*player)->change(0, song)) {
+        std::println(stderr, "irama-cli: the player refused the song");
+        return failure;
+    }
     auto writer = irama::WavWriter::create(
         options.path, {.sample_rate = options.rate, .channels = synth_channels});
     if (!writer) {
@@ -301,7 +363,7 @@ int synth(const SynthOptions& options) {
         // rest until the frames before the next of them are rendered, which empties it. Only more
         // messages at one frame than the queue holds would make the last of them a frame late.
         for (; next != messages->end() && next->frame < end; ++next) {
-            if (!send(**player, *next)) {
+            if (!send(**player, instrument, *next)) {
                 end = std::max(next->frame, start + 1);
                 break;
             }
@@ -309,6 +371,9 @@ int synth(const SynthOptions& options) {
         const auto samples =
             std::span{block}.first(irama::narrow<std::size_t>(end - start) * synth_channels);
         (*player)->render(samples);
+        // Dropping the change sets the player hands back frees the parts they replaced.
+        while ((*player)->take_returned() != nullptr) {
+        }
         written = writer->write(samples).has_value();
         start = end;
     }

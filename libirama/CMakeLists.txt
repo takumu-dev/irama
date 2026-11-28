@@ -14,6 +14,7 @@ add_subdirectory(src/param)
 add_subdirectory(src/source)
 add_subdirectory(src/filter)
 add_subdirectory(src/voice)
+add_subdirectory(src/model)
 add_subdirectory(src/player)
 
 # The imported targets that libirama may link: those of its own dependencies, at the top level of

@@ -59,6 +59,25 @@ TEST_CASE("an owned array holds its length of value-initialised elements", "[bas
     REQUIRE(std::ranges::all_of(*array, [](int element) { return element == 0; }));
 }
 
+TEST_CASE("an owned array can hold copies of a value", "[base]") {
+    irama::test::CountingAllocator counting;
+    const auto array =
+        irama::OwnedArray<std::array<int, 2>>::create(counting.allocator(), 3, std::array{4, 5});
+
+    REQUIRE(array.has_value());
+    REQUIRE(array->size() == 3);
+    REQUIRE(std::ranges::all_of(*array, [](const auto& element) { return element.at(1) == 5; }));
+    REQUIRE(counting.last().size == 3 * sizeof(std::array<int, 2>));
+}
+
+TEST_CASE("an owned array of copies reports running out of memory", "[base]") {
+    irama::test::CountingAllocator counting;
+    counting.fail_next();
+    const auto array = irama::OwnedArray<int>::create(counting.allocator(), 5, 1);
+
+    REQUIRE(array.error() == irama::AllocationError::out_of_memory);
+}
+
 TEST_CASE("an owned array frees its elements with the size and alignment they were allocated with",
           "[base]") {
     irama::test::CountingAllocator counting;
