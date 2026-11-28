@@ -38,7 +38,7 @@ constexpr std::array table{
 // find_shortcut() finds each entry at its ID's place.
 static_assert(std::ranges::all_of(std::views::iota(std::size_t{0}, table.size()),
                                   [](std::size_t i) {
-                                      return std::to_underlying(table.at(i).id) == i;
+                                      return std::cmp_equal(std::to_underlying(table.at(i).id), i);
                                   }));
 
 } // namespace
