@@ -93,6 +93,17 @@ TEST_CASE("a full spsc queue refuses a push and keeps what it holds", "[base]") 
     REQUIRE(queue.try_pop() == std::nullopt);
 }
 
+TEST_CASE("an spsc queue says whether a push would find room", "[base]") {
+    irama::SpscQueue<int, 2> queue;
+    REQUIRE(queue.has_room());
+    REQUIRE(queue.try_push(1));
+    REQUIRE(queue.has_room());
+    REQUIRE(queue.try_push(2));
+    REQUIRE_FALSE(queue.has_room());
+    REQUIRE(queue.try_pop() == 1);
+    REQUIRE(queue.has_room());
+}
+
 TEST_CASE("an spsc queue keeps its order and its capacity as it wraps around", "[base]") {
     // Starting from each of its four slots in turn, so that what it holds straddles the end of its
     // storage in most cases.

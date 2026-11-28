@@ -223,8 +223,32 @@ struct InstrumentBlock {
     std::span<const float> right_gain;
 };
 
-/// The one instrument a player plays: the live value of each of its parameters, and the values that
-/// every voice reads, computed once for all of them.
+/// The buffers an instrument computes a block's values into, which a player reuses for each
+/// instrument in turn.
+struct InstrumentBuffers {
+    /// The most frames an instrument computes at once.
+    static constexpr std::size_t max_block_frames = 256;
+
+    /// The oscillator's level of each frame.
+    std::array<float, max_block_frames> osc_level{};
+    /// The pulse width of each frame.
+    std::array<float, max_block_frames> pulse_width{};
+    /// The tuning of each frame.
+    std::array<float, max_block_frames> tuning{};
+    /// The noise's level of each frame.
+    std::array<float, max_block_frames> noise_level{};
+    /// The filter's coefficients of each frame.
+    std::array<SvfCoefficients, max_block_frames> filter{};
+    /// The sustain level of each frame.
+    std::array<float, max_block_frames> sustain{};
+    /// The gain of each frame on the left channel.
+    std::array<float, max_block_frames> left_gain{};
+    /// The gain of each frame on the right channel.
+    std::array<float, max_block_frames> right_gain{};
+};
+
+/// One instrument's live state: the live value of each of its parameters, from which it computes
+/// the values that every voice of it reads, once for all of them.
 ///
 /// It holds one `ParamSmoother` for each parameter in `instrument_params`, at the same index, and
 /// advances them every frame, whether a voice reads them or not. The amplifier's gain is in
@@ -235,7 +259,7 @@ struct InstrumentBlock {
 class Instrument {
   public:
     /// The most frames `render()` computes at once.
-    static constexpr std::size_t max_block_frames = 256;
+    static constexpr std::size_t max_block_frames = InstrumentBuffers::max_block_frames;
 
     /// Makes the instrument with every parameter at its default.
     ///
@@ -247,12 +271,16 @@ class Instrument {
     /// \param index The parameter's index in `instrument_params`, which is checked.
     /// \param value The new plain value, already constrained to the parameter.
     /// \param smooth Whether it ramps there, as its descriptor says, rather than jump. A player
-    ///               ramps only while a voice sounds.
+    ///               ramps only while a voice of the instrument sounds.
     void set(std::size_t index, float value, bool smooth) IRAMA_NONBLOCKING;
 
     /// \param index The parameter's index in `instrument_params`, which is checked.
     /// \return The parameter's live plain value, as of the latest frame computed.
     [[nodiscard]] float value(std::size_t index) const;
+
+    /// \param index The parameter's index in `instrument_params`, which is checked.
+    /// \return The latest plain value the parameter was set to, which it may still be gliding to.
+    [[nodiscard]] float target(std::size_t index) const;
 
     /// \return The sample rate in hertz.
     [[nodiscard]] float sample_rate() const;
@@ -278,21 +306,21 @@ class Instrument {
 
     /// Computes the next frames' values for the voices, and moves every parameter on past them.
     ///
+    /// \param buffers Where to compute the values, overwriting what they hold.
     /// \param frames How many frames, at most `max_block_frames`, which is checked.
-    /// \return The values, which stay valid until the next call.
-    [[nodiscard]] InstrumentBlock render(std::size_t frames) IRAMA_NONBLOCKING;
+    /// \return The values, which stay valid until `buffers` is next written.
+    [[nodiscard]] InstrumentBlock render(InstrumentBuffers& buffers,
+                                         std::size_t frames) IRAMA_NONBLOCKING;
+
+    /// Moves every parameter on past the next frames without computing their values, as for an
+    /// instrument with no voice sounding.
+    ///
+    /// \param frames How many frames.
+    void advance(std::size_t frames) IRAMA_NONBLOCKING;
 
   private:
     float sample_rate_;
     std::array<ParamSmoother, instrument_params.size()> params_;
-    std::array<float, max_block_frames> osc_level_{};
-    std::array<float, max_block_frames> pulse_width_{};
-    std::array<float, max_block_frames> tuning_{};
-    std::array<float, max_block_frames> noise_level_{};
-    std::array<SvfCoefficients, max_block_frames> filter_{};
-    std::array<float, max_block_frames> sustain_{};
-    std::array<float, max_block_frames> left_gain_{};
-    std::array<float, max_block_frames> right_gain_{};
 };
 
 } // namespace irama

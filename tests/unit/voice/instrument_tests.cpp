@@ -68,17 +68,19 @@ template <typename Value> void append(std::vector<Value>& gathered, std::span<co
 
 // Renders as the player does, inside a render scope, so the real-time checks watch the instrument.
 [[nodiscard]] irama::InstrumentBlock render_block(irama::Instrument& instrument,
+                                                  irama::InstrumentBuffers& buffers,
                                                   std::size_t frames) IRAMA_NONBLOCKING {
     const irama::RenderScope scope;
-    return instrument.render(frames);
+    return instrument.render(buffers, frames);
 }
 
 // Renders the instrument's next frames in the largest blocks it takes.
 [[nodiscard]] Rendered render(irama::Instrument& instrument, std::size_t frames) {
     Rendered rendered;
+    irama::InstrumentBuffers buffers;
     for (std::size_t done = 0; done < frames; done += irama::Instrument::max_block_frames) {
-        const irama::InstrumentBlock block =
-            render_block(instrument, std::min(irama::Instrument::max_block_frames, frames - done));
+        const irama::InstrumentBlock block = render_block(
+            instrument, buffers, std::min(irama::Instrument::max_block_frames, frames - done));
         append(rendered.sustain, block.sustain);
         append(rendered.left_gain, block.left_gain);
         append(rendered.right_gain, block.right_gain);
@@ -253,6 +255,20 @@ TEST_CASE("an instrument's value set without smoothing jumps at once", "[voice]"
     REQUIRE(instrument.value(sustain) == 25.0F);
     const auto rendered = render(instrument, 300);
     REQUIRE(rendered.sustain == std::vector<float>(300, 0.25F));
+}
+
+TEST_CASE("an instrument moved on without its values computed glides as one computed", "[voice]") {
+    const std::size_t gain = index_of(InstrumentParam::gain);
+    irama::Instrument rendered{rate};
+    irama::Instrument advanced{rate};
+    rendered.set(gain, 0.0F, true);
+    advanced.set(gain, 0.0F, true);
+    REQUIRE(advanced.target(gain) == 0.0F);
+    REQUIRE(advanced.value(gain) == -12.0F);
+    static_cast<void>(render(rendered, 300));
+    advanced.advance(300);
+    REQUIRE(advanced.value(gain) == rendered.value(gain));
+    REQUIRE(render(advanced, ramp_frames).left_gain == render(rendered, ramp_frames).left_gain);
 }
 
 TEST_CASE("the sustain level follows its smoothed value, as a level from 0 to 1", "[voice]") {

@@ -40,7 +40,8 @@ inline constexpr std::size_t player_voices = 32;
 /// the instrument's parameter values.
 ///
 /// The engine holds a player only while a device is open, at the device's rate. Each new player
-/// starts with the whole copy, which outlives every player. The callback
+/// starts with the whole song, sent as one change set before it renders: the new song's song part,
+/// and the copy as instrument 01, which outlives every player. The callback
 /// renders the player, clips its output to [−1, 1], and reports its CPU load, whether it clipped,
 /// and a heartbeat, all through atomics that the UI thread reads. Every function is called on the
 /// UI thread.
@@ -98,9 +99,9 @@ class AudioEngine {
     /// open, it does nothing.
     void send(const NoteMessage& message);
 
-    /// Sets one of the instrument's parameters in Studio's copy, and sends it to the player at
-    /// once. If the player's queue refuses it, the copy keeps it and `flush()` sends it again. With
-    /// no device open, only the copy changes, and the next player starts with it.
+    /// Sets one of the instrument's parameters in Studio's copy, and sends the player a change set
+    /// of instrument 01 holding the whole copy, after any message that its queue has refused
+    /// before. With no device open, only the copy changes, and the next player starts with it.
     ///
     /// \param id The ID of one of the parameters in `irama::instrument_params`, which is checked.
     /// \param value The new plain value, any number but NaN, constrained to the parameter.
@@ -109,8 +110,9 @@ class AudioEngine {
     /// \return Studio's copy of the instrument's parameter values.
     [[nodiscard]] const InstrumentValues& parameters() const { return parameters_; }
 
-    /// Sends the messages and parameter values the player's queue has refused, as far as it now has
-    /// room. Call it once a frame.
+    /// Sends the messages the player's queue has refused, as far as it now has room, and drops the
+    /// change sets the player has handed back, which frees the parts they replaced. Call it once a
+    /// frame.
     void flush();
 
     /// \return How many voices were sounding at the end of the latest callback.
@@ -158,11 +160,11 @@ class AudioEngine {
     // Opens the chosen device with a new player.
     [[nodiscard]] bool open_choice(const DeviceChoice& choice);
 
-    // Puts a message in the player's queue, and returns whether the queue took it.
-    [[nodiscard]] bool deliver(const NoteMessage& message);
+    // Sends a message after any waiting in the backlog, with a device open.
+    void send_message(PlayerMessage message);
 
-    // Sends the parameter values waiting in the copy, as far as the player's queue has room.
-    void send_parameters();
+    // Puts a message in the player's queue, and returns whether the queue took it.
+    [[nodiscard]] bool deliver(PlayerMessage& message);
 
     AudioDevice device_;
     // The callback reads these two only while the device runs, and they change only while it

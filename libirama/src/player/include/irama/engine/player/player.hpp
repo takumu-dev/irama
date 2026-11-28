@@ -12,7 +12,8 @@
 #include <irama/engine/base/owned_ptr.hpp>
 #include <irama/engine/base/pcg32.hpp>
 #include <irama/engine/base/spsc_queue.hpp>
-#include <irama/engine/param/param_id.hpp>
+#include <irama/engine/model/change_set.hpp>
+#include <irama/engine/model/engine_song.hpp>
 #include <irama/engine/voice/instrument.hpp>
 #include <irama/engine/voice/voice.hpp>
 
@@ -32,10 +33,6 @@ struct PlayerConfig {
     /// How many voices can sound at once, from 1 to `Player::max_voices_limit`. Stolen voices
     /// fading out don't count.
     std::size_t max_voices = 32;
-    /// The seed of the player's random numbers. The player keeps one `Pcg32`, of this seed on
-    /// stream 0, and each note-on splits the new voice's noise generator from it, so voices' noise
-    /// is uncorrelated, and the output depends only on the seed and the control messages.
-    std::uint64_t seed = 0x6972'616d'6131;
     /// The allocator the player draws all its memory from, and frees it to.
     Allocator allocator = default_allocator();
 };
@@ -58,8 +55,8 @@ struct ControlMessage {
         note_off,
         /// Releases every held voice.
         release_all,
-        /// Sets one of the instrument's parameters.
-        set_parameter,
+        /// Applies a change set to the EngineSong.
+        change,
     };
 
     /// The frame at which the message applies.
@@ -68,12 +65,14 @@ struct ControlMessage {
     Kind kind = Kind::note_on;
     /// The note of a note-on or a note-off.
     std::uint8_t note = 0;
-    /// The index of a set-parameter's parameter in the instrument's table.
-    std::uint16_t param = 0;
+    /// The instrument number of a note-on or a note-off.
+    std::uint8_t instrument = 0;
     /// The velocity of a note-on.
     float velocity = 0.0F;
-    /// The plain value of a set-parameter, already constrained to its parameter.
-    float value = 0.0F;
+    /// The change set of a change, which the message owns while it travels: the player takes it
+    /// from its owning pointer when it queues the message, and gives it one again when it hands it
+    /// back.
+    ChangeSet* changes = nullptr;
 };
 
 } // namespace detail
@@ -83,16 +82,37 @@ class Player;
 /// The single owner of a player, which frees it through the allocator it was created with.
 using PlayerPtr = OwnedPtr<Player>;
 
-/// The object a host renders: it owns the instrument and its voices, and plays the control messages
-/// it is sent.
+/// The object a host renders: it owns the EngineSong, the live state of each instrument and the
+/// voices, and plays the control messages it is sent.
 ///
 /// A player is created and destroyed on a control thread, and rendered on the audio thread, never
-/// both at once. Its control functions, `note_on()`, `note_off()`, `release_all()` and
-/// `set_parameter()`, are called from one control thread, and queue a message for `render()` to
-/// apply on the audio thread, at the frame the message names. Frames are counted from the first
-/// frame the player renders, and each message applies exactly at its frame, so the output never
-/// depends on how the host splits its render calls. A frame already rendered applies at the first
-/// frame of the next render call, so a message meant to apply at once can name frame 0.
+/// both at once. Its control functions, `note_on()`, `note_off()`, `release_all()` and `change()`,
+/// are called from one control thread, and queue a message for `render()` to apply on the audio
+/// thread, at the frame the message names. Frames are counted from the first frame the player
+/// renders, and each message applies exactly at its frame, so the output never depends on how the
+/// host splits its render calls. A frame already rendered applies at the first frame of the next
+/// render call, so a message meant to apply at once can name frame 0.
+///
+/// A new player's EngineSong has the new song's song part and every pattern and instrument entry
+/// empty. A host loads a song by sending a change set of every part at frame 0, before the first
+/// render. A change set applies whole at its frame: its parts replace their entries together, and
+/// the player sends it back, holding the parts it replaced, through a return queue that
+/// `take_returned()` empties on the control thread, where dropping it frees them. A change set
+/// waits, with every message behind it, while the return queue is full, so the audio thread never
+/// frees, drops or leaks a part.
+///
+/// The player keeps one smoother for each parameter of each instrument number, at its default
+/// until the number's first instrument part arrives. When a change set replaces an instrument part,
+/// each value that differs from the one its smoother was last set to goes to it: a value with a
+/// smoothing time glides while a voice of that instrument sounds, and jumps while none does, and a
+/// value with none switches at the frame. An instrument emptied while its voices sound fades them
+/// out over 5 ms. The player computes each block's values only for the instruments with a voice
+/// sounding, into one set of buffers it reuses for each in turn, instrument 01 first.
+///
+/// The player keeps one `Pcg32`, seeded from the song part's seed on stream 0 when the player is
+/// created and whenever a change set brings a song part with a different seed. Each note-on splits
+/// the new voice's noise generator from it, so voices' noise is uncorrelated, and the output
+/// depends only on the song and the control messages.
 ///
 /// A note-on with every voice sounding steals one, as `choose_voice()` chooses: the oldest in its
 /// release, or else the quietest, or else the oldest. The stolen voice fades out over 5 ms in one
@@ -117,31 +137,35 @@ class Player {
     /// How many control messages can wait in the queue, and the most that one render call applies.
     static constexpr std::size_t queue_capacity = 1'024;
 
+    /// How many applied change sets can wait in the return queue to be taken back.
+    static constexpr std::size_t return_capacity = 1'024;
+
     /// Creates a player, allocating everything it will need from the config's allocator.
     ///
     /// Call it on a control thread. A sample rate of 0, or a voice count of 0 or above
     /// `max_voices_limit`, breaks a precondition, which is checked.
     ///
-    /// \param config The sample rate, the voice count, the seed and the allocator.
+    /// \param config The sample rate, the voice count and the allocator.
     /// \return The player, or `CreateError::out_of_memory` when the allocator has no memory, in
     ///         which case everything allocated has been freed.
     [[nodiscard]] static std::expected<PlayerPtr, CreateError> create(const PlayerConfig& config);
 
-    /// Makes an empty player, with every parameter at its default, for `create()` alone.
+    /// Makes an empty player, with no song part, instruments or voices, for `create()` alone.
     ///
     /// \param key Which only `create()` can make.
-    /// \param sample_rate The sample rate in hertz.
-    /// \param seed The seed of its random numbers.
-    Player(Key key, std::uint32_t sample_rate, std::uint64_t seed);
+    explicit Player(Key key);
 
     Player(const Player&) = delete;
     Player& operator=(const Player&) = delete;
     Player(Player&&) = delete;
     Player& operator=(Player&&) = delete;
-    ~Player() = default;
 
-    /// Queues a note-on: a free voice starts playing the note at `frame`. With no voice free, the
-    /// note steals one, which fades out.
+    /// Frees the EngineSong's parts, and every change set still waiting in either queue.
+    ~Player();
+
+    /// Queues a note-on: a free voice starts playing the note on an instrument at `frame`. With no
+    /// voice free, the note steals one, which fades out. An instrument number that is empty at the
+    /// frame plays nothing.
     ///
     /// Call it on the control thread, with frames that never go backwards from one control
     /// message to the next, which is checked where `NDEBUG` isn't defined.
@@ -149,17 +173,20 @@ class Player {
     /// \param frame The frame at which the note starts.
     /// \param note The note, from `lowest_note` to `highest_note`, which is checked.
     /// \param velocity How hard the note is played, from 0 to 1, which is checked.
+    /// \param instrument The instrument number, from 0x01 to 0xFE, which is checked.
     /// \return Whether the message was queued. A full queue refuses it and changes nothing.
-    [[nodiscard]] bool note_on(std::uint64_t frame, int note, float velocity);
+    [[nodiscard]] bool note_on(std::uint64_t frame, int note, float velocity, int instrument);
 
-    /// Queues a note-off: every held voice playing the note starts its release at `frame`.
+    /// Queues a note-off: every held voice playing the note on the instrument starts its release
+    /// at `frame`.
     ///
     /// Call it on the control thread, as `note_on()`.
     ///
     /// \param frame The frame at which the voices are released.
     /// \param note The note, from `lowest_note` to `highest_note`, which is checked.
+    /// \param instrument The instrument number, from 0x01 to 0xFE, which is checked.
     /// \return Whether the message was queued. A full queue refuses it and changes nothing.
-    [[nodiscard]] bool note_off(std::uint64_t frame, int note);
+    [[nodiscard]] bool note_off(std::uint64_t frame, int note, int instrument);
 
     /// Queues a release-all: every held voice starts its release at `frame`.
     ///
@@ -169,20 +196,26 @@ class Player {
     /// \return Whether the message was queued. A full queue refuses it and changes nothing.
     [[nodiscard]] bool release_all(std::uint64_t frame);
 
-    /// Queues a set-parameter: one of the instrument's parameters takes a new value at `frame`.
+    /// Queues a change: the change set's parts replace their entries in the EngineSong at `frame`,
+    /// together, and the change set comes back, holding the parts it replaced, through
+    /// `take_returned()`.
     ///
-    /// The value is constrained to the parameter here, on the control thread: clamped to its
-    /// range, and rounded to the nearest whole number if it is stepped. At its frame, a parameter
-    /// with a smoothing time glides to it over exactly that time if a voice is sounding, and jumps
-    /// to it if none is, so values given to a new player at frame 0 apply as if it had been created
-    /// with them. A parameter with no smoothing time switches at its frame. Call it on the control
-    /// thread, as `note_on()`.
+    /// Each instrument part holds one value for each parameter in `instrument_params`, each
+    /// already constrained to its parameter, which is checked. Call it on the control thread, as
+    /// `note_on()`.
     ///
-    /// \param frame The frame at which the parameter takes the value.
-    /// \param id The ID of one of the parameters in `instrument_params`, which is checked.
-    /// \param value The plain value, any number but NaN, which is checked.
+    /// \param frame The frame at which the parts are swapped.
+    /// \param changes The change set, never null, which is checked. The player takes it if the
+    ///                message is queued, and leaves it as it was if not.
     /// \return Whether the message was queued. A full queue refuses it and changes nothing.
-    [[nodiscard]] bool set_parameter(std::uint64_t frame, ParamId id, float value);
+    [[nodiscard]] bool change(std::uint64_t frame, ChangeSetPtr& changes);
+
+    /// Takes back the oldest change set the player has applied and not yet handed back. It holds
+    /// the parts it replaced, which dropping it frees. Call it on the control thread, until it
+    /// returns null, often enough that the return queue doesn't fill while sound plays.
+    ///
+    /// \return The change set, or null if none is waiting.
+    [[nodiscard]] ChangeSetPtr take_returned();
 
     /// Renders the next frames, applying each queued message at its frame.
     ///
@@ -209,16 +242,38 @@ class Player {
     // of its limit.
     void apply_due_messages(std::size_t& popped) IRAMA_NONBLOCKING;
 
-    void apply(const Message& message) IRAMA_NONBLOCKING;
+    // Applies a message, and returns whether it could: a change waits while the return queue is
+    // full.
+    [[nodiscard]] bool apply(const Message& message) IRAMA_NONBLOCKING;
+
+    // Swaps a change set's parts into the EngineSong, and hands their effects to the voices.
+    void apply_changes(ChangeSet& changes) IRAMA_NONBLOCKING;
+
+    // Gives the instrument's smoothers the values of its new part that differ from theirs, or fades
+    // out its voices if it was emptied.
+    void change_instrument(std::size_t number) IRAMA_NONBLOCKING;
+
+    // Whether any voice of the instrument is sounding, a fading one included.
+    [[nodiscard]] bool sounding(std::size_t number) const;
+
+    // The live state of an instrument number.
+    [[nodiscard]] Instrument& instrument(std::size_t number);
 
     // Renders frames that no message falls inside, at most one block of them.
     void render_block(std::span<float> out) IRAMA_NONBLOCKING;
 
-    // The live value of each of the instrument's parameters, which only the audio thread touches.
-    Instrument instrument_;
+    EngineSong song_;
+    // The live value of each instrument number's parameters, instrument 01 first, which only the
+    // audio thread touches.
+    OwnedArray<Instrument> instruments_;
+    // Where each instrument computes its values for a block, one after another.
+    InstrumentBuffers buffers_;
     OwnedArray<Voice> voices_;
-    // The stolen voices fading out.
+    // The instrument number of each voice's latest note.
+    OwnedArray<std::uint8_t> voice_instruments_;
+    // The stolen voices fading out, and the instrument number of each.
     OwnedArray<Voice> fades_;
+    OwnedArray<std::uint8_t> fade_instruments_;
     // How many notes the player has started, which orders its voices from oldest to newest.
     std::uint64_t notes_started_ = 0;
     // The generator each note-on splits its voice's noise generator from.
@@ -226,10 +281,12 @@ class Player {
     // Each voice's working, for one block.
     OwnedArray<float> scratch_;
     SpscQueue<Message, queue_capacity> queue_;
+    // The change sets applied, on their way back to the control thread.
+    SpscQueue<ChangeSet*, return_capacity> returned_;
     // The frame of the latest message queued, which only the control thread reads.
     std::uint64_t last_queued_frame_ = 0;
-    // The message popped whose frame hasn't come yet, since the queue can't be read without
-    // popping.
+    // The message popped whose frame hasn't come yet, or a change waiting for room in the return
+    // queue, since the queue can't be read without popping.
     std::optional<Message> waiting_;
     // How many frames the player has rendered, which only the audio thread reads.
     std::uint64_t frame_ = 0;

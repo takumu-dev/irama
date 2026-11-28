@@ -53,6 +53,16 @@ class SpscQueue {
         return true;
     }
 
+    /// Tells whether a push would find room. Only the producer thread calls this. Only the producer
+    /// fills the queue, so room it finds stays until the producer's next push.
+    ///
+    /// \return Whether the queue has room for another message.
+    [[nodiscard]] bool has_room() const IRAMA_NONBLOCKING {
+        // Acquire, as in try_push(), so that a slot found free has been read.
+        return next(back_.load(std::memory_order_relaxed)) !=
+               front_.load(std::memory_order_acquire);
+    }
+
     /// Takes the message at the front, unless the queue is empty. Only the consumer thread calls
     /// this.
     ///

@@ -27,8 +27,8 @@ namespace irama {
 /// which could grow, and would draw on the default allocator. Make one with `create()`. It moves,
 /// handing its elements over, but doesn't copy. Moving one leaves it empty.
 ///
-/// \tparam T The type of the elements, which can be made with no arguments.
-template <std::default_initializable T> class OwnedArray {
+/// \tparam T The type of the elements.
+template <typename T> class OwnedArray {
   public:
     /// Makes an array of `length` value-initialised elements, in memory from `allocator`.
     ///
@@ -40,19 +40,34 @@ template <std::default_initializable T> class OwnedArray {
     /// \return The array, or `AllocationError::out_of_memory` when the allocator has no memory or
     ///         `length` elements can't be represented in a `std::size_t` of bytes.
     [[nodiscard]] static std::expected<OwnedArray, AllocationError>
-    create(const Allocator& allocator, std::size_t length) {
-        if (length == 0) {
-            return OwnedArray{allocator, nullptr, 0};
-        }
-        if (length > std::numeric_limits<std::size_t>::max() / sizeof(T)) {
+    create(const Allocator& allocator, std::size_t length)
+        requires std::default_initializable<T>
+    {
+        T* elements = allocate_elements(allocator, length);
+        if (elements == nullptr && length != 0) {
             return std::unexpected(AllocationError::out_of_memory);
         }
-        void* memory = allocate(allocator, length * sizeof(T), alignof(T));
-        if (memory == nullptr) {
-            return std::unexpected(AllocationError::out_of_memory);
-        }
-        T* elements = static_cast<T*>(memory);
         std::uninitialized_value_construct_n(elements, length);
+        return OwnedArray{allocator, elements, length};
+    }
+
+    /// Makes an array of `length` copies of `value`, in memory from `allocator`, as the other
+    /// `create()` does, for elements that can't be made with no arguments.
+    ///
+    /// \param allocator The allocator to draw on.
+    /// \param length How many elements the array holds.
+    /// \param value What each element is a copy of.
+    /// \return The array, or `AllocationError::out_of_memory` when the allocator has no memory or
+    ///         `length` elements can't be represented in a `std::size_t` of bytes.
+    [[nodiscard]] static std::expected<OwnedArray, AllocationError>
+    create(const Allocator& allocator, std::size_t length, const T& value)
+        requires std::copy_constructible<T>
+    {
+        T* elements = allocate_elements(allocator, length);
+        if (elements == nullptr && length != 0) {
+            return std::unexpected(AllocationError::out_of_memory);
+        }
+        std::uninitialized_fill_n(elements, length, value);
         return OwnedArray{allocator, elements, length};
     }
 
@@ -137,6 +152,14 @@ template <std::default_initializable T> class OwnedArray {
     }
 
   private:
+    // The memory for `length` elements, or null for none or when the allocator has no memory.
+    [[nodiscard]] static T* allocate_elements(const Allocator& allocator, std::size_t length) {
+        if (length == 0 || length > std::numeric_limits<std::size_t>::max() / sizeof(T)) {
+            return nullptr;
+        }
+        return static_cast<T*>(allocate(allocator, length * sizeof(T), alignof(T)));
+    }
+
     OwnedArray(const Allocator& allocator, T* elements, std::size_t length)
         : allocator_{allocator}, elements_{elements}, length_{length} {}
 

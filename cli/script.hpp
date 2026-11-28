@@ -28,7 +28,8 @@ struct ScriptMessage {
     float velocity = 0.0F;
     // The parameter of a set-parameter, one of the instrument's.
     irama::ParamId param{};
-    // The value of a set-parameter, a finite number, which the player clamps to the parameter.
+    // The value of a set-parameter, a finite number, clamped to the parameter before the player
+    // sees it.
     float value = 0.0F;
 };
 
@@ -48,7 +49,7 @@ struct ScriptError {
 //
 // Notes are written as the note column writes them, from C-0 to B-9 with `#` for a sharp, and a
 // velocity from 0 to 1. A parameter is named by its ID, and its value may be any finite number,
-// which the player clamps to the parameter's range. Frames never go backwards. Every value is
+// which is clamped to the parameter's range. Frames never go backwards. Every value is
 // checked here, so that no script can break a precondition of the player.
 [[nodiscard]] std::expected<std::vector<ScriptMessage>, ScriptError>
 parse_script(std::string_view text);

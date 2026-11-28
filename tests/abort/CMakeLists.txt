@@ -194,10 +194,17 @@ irama_assertion_report(bad_note player.cpp
 irama_assertion_report(bad_velocity player.cpp
     "velocity >= 0.0F && velocity <= 1.0F" "a velocity is from 0 to 1"
 )
-irama_assertion_report(unknown_parameter player.cpp
-    "index.has_value()" "a parameter's ID is one of the instrument's"
+irama_assertion_report(bad_instrument player.cpp
+    "instrument >= 0x01 && instrument <= 0xFE" "an instrument number is from 01 to FE"
 )
-irama_assertion_report(parameter_nan player.cpp "!std::isnan(value)" "a parameter's value is a number")
+irama_assertion_report(no_change_set player.cpp "changes != nullptr" "a change has a change set")
+irama_assertion_report(short_instrument player.cpp
+    "values.size() == instrument_params.size()"
+    "an instrument part has a value for each of the instrument's parameters"
+)
+irama_assertion_report(unconstrained_value player.cpp
+    "value == param.constrain(value)" "an instrument's value is constrained to its parameter"
+)
 irama_assertion_report(odd_length player.cpp
     "out.size() % channels == 0" "stereo frames have two samples each"
 )
@@ -228,15 +235,30 @@ irama_add_abort_test(player "a velocity that isn't a number aborts with its repo
     ARGUMENTS velocity-nan
     REPORT "${bad_velocity}"
 )
-irama_add_abort_test(player "a set-parameter with an ID the instrument hasn't aborts with its report"
+irama_add_abort_test(player "a note-on on instrument 00 aborts with its report"
     PROGRAM irama_abort_player
-    ARGUMENTS unknown-parameter
-    REPORT "${unknown_parameter}"
+    ARGUMENTS instrument-zero
+    REPORT "${bad_instrument}"
 )
-irama_add_abort_test(player "a set-parameter with a value that isn't a number aborts with its report"
+irama_add_abort_test(player "a note-off on instrument FF aborts with its report"
     PROGRAM irama_abort_player
-    ARGUMENTS parameter-nan
-    REPORT "${parameter_nan}"
+    ARGUMENTS instrument-too-high
+    REPORT "${bad_instrument}"
+)
+irama_add_abort_test(player "a change with no change set aborts with its report"
+    PROGRAM irama_abort_player
+    ARGUMENTS no-change-set
+    REPORT "${no_change_set}"
+)
+irama_add_abort_test(player "an instrument part missing values aborts with its report"
+    PROGRAM irama_abort_player
+    ARGUMENTS instrument-part-short
+    REPORT "${short_instrument}"
+)
+irama_add_abort_test(player "an instrument value outside its range aborts with its report"
+    PROGRAM irama_abort_player
+    ARGUMENTS instrument-value-out-of-range
+    REPORT "${unconstrained_value}"
 )
 irama_add_abort_test(player "rendering half a frame aborts with its report"
     PROGRAM irama_abort_player
