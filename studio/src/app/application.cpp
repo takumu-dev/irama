@@ -205,12 +205,12 @@ class SettingsFiles {
 // Plays a key going down or up on the note keys. SDL's scancodes are USB HID usage IDs, which the
 // note keys read. A key going up always ends the note it started.
 void handle_key(const SDL_KeyboardEvent& key, NoteKeys& keys, AudioEngine& engine) {
-    const int usage = static_cast<int>(key.scancode);
+    const int usage_id = static_cast<int>(key.scancode);
     std::optional<NoteMessage> message;
     if (!key.down) {
-        message = keys.release(usage);
+        message = keys.release(usage_id);
     } else if (may_play(key)) {
-        message = keys.press(usage, key.repeat);
+        message = keys.press(usage_id, key.repeat);
     }
     if (message) {
         engine.send(*message);
