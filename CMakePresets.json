@@ -228,8 +228,11 @@
         "outputOnFailure": true,
         "outputJUnitFile": "junit.xml"
       },
+      "$comment": "With interactive debugging off, CTest turns off the system's error and crash dialogs for every test, and a test that hangs is stopped after 5 minutes.",
       "execution": {
-        "noTestsAction": "error"
+        "interactiveDebugging": false,
+        "noTestsAction": "error",
+        "timeout": 300
       }
     },
     { "name": "gcc-debug", "inherits": "test", "configurePreset": "gcc-debug" },
