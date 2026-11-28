@@ -3,6 +3,9 @@
 
 #include "app/shortcut_actions.hpp"
 
+#include "app/song_editor.hpp"
+#include "audio/audio_device.hpp"
+#include "audio/audio_engine.hpp"
 #include "input/chord.hpp"
 #include "input/key_router.hpp"
 #include "input/note_keys.hpp"
@@ -11,37 +14,45 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <optional>
+#include <span>
 #include <utility>
 
+using irama_studio::AudioBackend;
+using irama_studio::AudioEngine;
 using irama_studio::Key;
 using irama_studio::KeyEvent;
 using irama_studio::KeyRouter;
 using irama_studio::NoteKeys;
 using irama_studio::ShortcutId;
+using irama_studio::SongEditor;
 
 TEST_CASE("the octave shortcuts step the keyboard octave from 0 to 8", "[studio][shortcuts]") {
+    SongEditor editor;
+    AudioEngine engine{std::span<const AudioBackend>{}};
     NoteKeys keys;
-    irama_studio::run_shortcut(ShortcutId::raise_octave, keys);
+    irama_studio::run_shortcut(ShortcutId::raise_octave, keys, editor, engine);
     CHECK(keys.octave() == 5);
-    irama_studio::run_shortcut(ShortcutId::lower_octave, keys);
-    irama_studio::run_shortcut(ShortcutId::lower_octave, keys);
+    irama_studio::run_shortcut(ShortcutId::lower_octave, keys, editor, engine);
+    irama_studio::run_shortcut(ShortcutId::lower_octave, keys, editor, engine);
     CHECK(keys.octave() == 3);
 
     keys.set_octave(0);
-    irama_studio::run_shortcut(ShortcutId::lower_octave, keys);
+    irama_studio::run_shortcut(ShortcutId::lower_octave, keys, editor, engine);
     CHECK(keys.octave() == 0);
     keys.set_octave(8);
-    irama_studio::run_shortcut(ShortcutId::raise_octave, keys);
+    irama_studio::run_shortcut(ShortcutId::raise_octave, keys, editor, engine);
     CHECK(keys.octave() == 8);
 }
 
 TEST_CASE("numpad / and * step the keyboard octave through the router", "[studio][shortcuts]") {
+    SongEditor editor;
+    AudioEngine engine{std::span<const AudioBackend>{}};
     KeyRouter router;
-    const auto step = [&router](Key key) {
+    const auto step = [&router, &editor, &engine](Key key) {
         const KeyEvent event{.key = std::to_underlying(key)};
         const std::optional shortcut = router.route(event, {}).shortcut;
         REQUIRE(shortcut);
-        irama_studio::run_shortcut(*shortcut, router.note_keys());
+        irama_studio::run_shortcut(*shortcut, router.note_keys(), editor, engine);
         static_cast<void>(router.route(KeyEvent{.key = event.key, .down = false}, {}));
     };
     step(Key::keypad_multiply);

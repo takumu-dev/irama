@@ -39,12 +39,20 @@ add_library(irama_studio_core STATIC
     src/app/options.cpp
     src/app/settings.cpp
     src/app/shortcut_actions.cpp
+    src/app/song_editor.cpp
     src/audio/audio_device.cpp
     src/audio/audio_engine.cpp
     src/audio/create_player.cpp
     src/audio/device_choice.cpp
-    src/audio/instrument_values.cpp
     src/audio/miniaudio.cpp
+    src/audio/sent_song.cpp
+    src/doc/changed_parts.cpp
+    src/doc/document.cpp
+    src/doc/edit_scope.cpp
+    src/doc/edits.cpp
+    src/doc/limits.cpp
+    src/doc/part_copies.cpp
+    src/doc/undo_history.cpp
     src/input/chord.cpp
     src/input/key_map.cpp
     src/input/key_router.cpp

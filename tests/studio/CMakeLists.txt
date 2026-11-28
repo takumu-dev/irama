@@ -8,9 +8,13 @@ add_executable(irama_studio_tests
     audio_device_tests.cpp
     config_files_tests.cpp
     device_choice_tests.cpp
+    document_builder.cpp
+    document_tests.cpp
+    edit_helper.cpp
+    edits_tests.cpp
+    headless_frames_tests.cpp
     heartbeat_watch_tests.cpp
     instrument_layout_tests.cpp
-    instrument_values_tests.cpp
     key_map_tests.cpp
     key_router_tests.cpp
     message_backlog_tests.cpp
@@ -19,9 +23,13 @@ add_executable(irama_studio_tests
     options_tests.cpp
     param_text_tests.cpp
     play_tests.cpp
+    random_edits_tests.cpp
+    sent_song_tests.cpp
     settings_tests.cpp
     shortcut_actions_tests.cpp
     shortcut_table_tests.cpp
+    song_editor_tests.cpp
+    undo_history_tests.cpp
     video_drivers_tests.cpp
 )
 target_link_libraries(irama_studio_tests PRIVATE irama_studio_core irama_catch_main)

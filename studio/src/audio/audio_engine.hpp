@@ -6,13 +6,14 @@
 #include "audio/audio_device.hpp"
 #include "audio/device_choice.hpp"
 #include "audio/heartbeat_watch.hpp"
-#include "audio/instrument_values.hpp"
 #include "audio/message_backlog.hpp"
+#include "audio/sent_song.hpp"
+#include "doc/changed_parts.hpp"
+#include "doc/document.hpp"
 #include "input/note_message.hpp"
 #include <irama/engine/base/nonblocking.hpp>
-#include <irama/engine/param/param_id.hpp>
+#include <irama/engine/model/change_set.hpp>
 #include <irama/engine/player/player.hpp>
-#include <irama/engine/voice/instrument.hpp>
 
 #include <array>
 #include <atomic>
@@ -36,15 +37,14 @@ inline constexpr std::array studio_backends{AudioBackend::pulseaudio, AudioBacke
 /// The number of voices Studio's player has.
 inline constexpr std::size_t player_voices = 32;
 
-/// Studio's sound: an audio device, the player it renders while it is open, and Studio's copy of
-/// the instrument's parameter values.
+/// Studio's sound: an audio device, the player it renders while it is open, and the song as last
+/// sent, part by part.
 ///
 /// The engine holds a player only while a device is open, at the device's rate. Each new player
-/// starts with the whole song, sent as one change set before it renders: the new song's song part,
-/// and the copy as instrument 01, which outlives every player. The callback
-/// renders the player, clips its output to [−1, 1], and reports its CPU load, whether it clipped,
-/// and a heartbeat, all through atomics that the UI thread reads. Every function is called on the
-/// UI thread.
+/// starts with the whole song, sent as one change set before it renders, and each edit after that
+/// sends the parts it changed. The song outlives every player. The callback renders the player,
+/// clips its output to [−1, 1], and reports its CPU load, whether it clipped, and a heartbeat, all
+/// through atomics that the UI thread reads. Every function is called on the UI thread.
 ///
 /// Every open, whether of another device, at another buffer size, or after a device is lost,
 /// closes the device, drops the player, and gives the device it opens a new player. The new player
@@ -52,7 +52,10 @@ inline constexpr std::size_t player_voices = 32;
 class AudioEngine {
   public:
     /// Makes an engine with no device open, on the first of `backends` that works.
-    explicit AudioEngine(std::span<const AudioBackend> backends);
+    ///
+    /// \param backends The backends to try, in order.
+    /// \param song The song every player starts with, until edits change it.
+    explicit AudioEngine(std::span<const AudioBackend> backends, const Document& song = Document{});
 
     AudioEngine(const AudioEngine&) = delete;
     AudioEngine& operator=(const AudioEngine&) = delete;
@@ -99,16 +102,17 @@ class AudioEngine {
     /// open, it does nothing.
     void send(const NoteMessage& message);
 
-    /// Sets one of the instrument's parameters in Studio's copy, and sends the player a change set
-    /// of instrument 01 holding the whole copy, after any message that its queue has refused
-    /// before. With no device open, only the copy changes, and the next player starts with it.
+    /// Rebuilds the parts an edit, its undo or its redo reported, and sends the player those that
+    /// differ from the parts last sent, as one change set, after any message that its queue has
+    /// refused before. A change set that would change nothing isn't sent. With no device open,
+    /// nothing is sent, and the next player starts with the song as changed.
     ///
-    /// \param id The ID of one of the parameters in `irama::instrument_params`, which is checked.
-    /// \param value The new plain value, any number but NaN, constrained to the parameter.
-    void set_parameter(irama::ParamId id, float value);
+    /// \param document The Document after the change.
+    /// \param parts What the change reported.
+    void send_changes(const Document& document, const ChangedParts& parts);
 
-    /// \return Studio's copy of the instrument's parameter values.
-    [[nodiscard]] const InstrumentValues& parameters() const { return parameters_; }
+    /// \return The song as last sent, which every new player starts with.
+    [[nodiscard]] const SentSong& sent_song() const { return sent_; }
 
     /// Sends the messages the player's queue has refused, as far as it now has room, and drops the
     /// change sets the player has handed back, which frees the parts they replaced. Call it once a
@@ -172,7 +176,7 @@ class AudioEngine {
     irama::PlayerPtr player_;
     float sample_rate_ = 0.0F;
     MessageBacklog backlog_;
-    InstrumentValues parameters_{irama::instrument_params};
+    SentSong sent_;
     std::string device_setting_;
     std::uint32_t buffer_size_ = default_buffer_size;
     // The name of the device open, or empty for the system default.
