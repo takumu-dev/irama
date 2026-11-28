@@ -7,6 +7,7 @@
 #include "app/options.hpp"
 #include "app/settings.hpp"
 #include "app/shortcut_actions.hpp"
+#include "app/song_editor.hpp"
 #include "audio/audio_engine.hpp"
 #include "audio/meter_display.hpp"
 #include "input/key_router.hpp"
@@ -220,12 +221,13 @@ class SettingsFiles {
 }
 
 // Routes a key going down or up: runs its shortcut, or sends its note message. A text field takes
-// the key while ImGui takes typed text.
-void handle_key(const SDL_KeyboardEvent& key, KeyRouter& router, AudioEngine& engine) {
+// the key while ImGui takes typed text, so Ctrl+Z there undoes its typing, not an edit.
+void handle_key(const SDL_KeyboardEvent& key, KeyRouter& router, SongEditor& editor,
+                AudioEngine& engine) {
     const KeyFocus focus{.text_field = ImGui::GetIO().WantTextInput};
     const RoutedKey routed = router.route(key_event(key), focus);
     if (routed.shortcut) {
-        run_shortcut(*routed.shortcut, router.note_keys());
+        run_shortcut(*routed.shortcut, router.note_keys(), editor, engine);
     }
     if (routed.note) {
         engine.send(*routed.note);
@@ -234,7 +236,8 @@ void handle_key(const SDL_KeyboardEvent& key, KeyRouter& router, AudioEngine& en
 
 // Handles the events waiting in SDL's queue, and returns false once the user has asked to quit.
 [[nodiscard]] bool handle_events(SDL_Window* window, float font_size, Settings& settings,
-                                 SettingsFiles& files, KeyRouter& router, AudioEngine& engine) {
+                                 SettingsFiles& files, KeyRouter& router, SongEditor& editor,
+                                 AudioEngine& engine) {
     bool keep_running = true;
     SDL_Event event{};
     while (SDL_PollEvent(&event)) {
@@ -244,7 +247,7 @@ void handle_key(const SDL_KeyboardEvent& key, KeyRouter& router, AudioEngine& en
         if (event.type == SDL_EVENT_QUIT || closed) {
             keep_running = false;
         } else if (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) {
-            handle_key(event.key, router, engine);
+            handle_key(event.key, router, editor, engine);
         } else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
             router.pointer_pressed();
         } else if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
@@ -396,7 +399,8 @@ int run(const Options& options) {
     }};
 
     // With no device, Studio runs silent, and the Audio window says why.
-    AudioEngine engine{studio_backends};
+    SongEditor editor;
+    AudioEngine engine{studio_backends, editor.document()};
     static_cast<void>(engine.open(settings.audio_device, settings.buffer_size));
     KeyRouter router{shortcut_table(), settings.octave};
     NoteKeys& keys = router.note_keys();
@@ -413,7 +417,7 @@ int run(const Options& options) {
         if ((SDL_GetWindowFlags(window) & hidden) != 0) {
             SDL_WaitEventTimeout(nullptr, hidden_wait_ms);
         }
-        if (!handle_events(window, font_size, settings, files, router, engine)) {
+        if (!handle_events(window, font_size, settings, files, router, editor, engine)) {
             running = false;
         }
         engine.flush();
@@ -425,16 +429,17 @@ int run(const Options& options) {
         status.voices = engine.active_voices();
         status.cpu_peak = meters.cpu_peak();
         status.clipping = meters.clipping();
+        status.refusal = editor.refusal();
         ImGui_ImplSDLGPU3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
-        if (!workspace.draw(status, engine)) {
+        if (!workspace.draw(status, engine, editor)) {
             running = false;
         }
         ImGui::Render();
         render(device, window);
         if (const std::optional chosen = workspace.chosen_shortcut()) {
-            run_shortcut(*chosen, keys);
+            run_shortcut(*chosen, keys, editor, engine);
         }
 
         const DelayedFile::Clock::time_point now = DelayedFile::Clock::now();

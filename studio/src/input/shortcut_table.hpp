@@ -26,6 +26,8 @@ enum class ShortcutContext : std::uint8_t {
 enum class ShortcutId : std::uint8_t {
     lower_octave,
     raise_octave,
+    undo,
+    redo,
 };
 
 /// One entry of the shortcut table: a named Studio function, where it works, and the chords that

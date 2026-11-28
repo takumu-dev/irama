@@ -406,11 +406,13 @@ as on Linux.
 - **Docking.** Windows dock inside the main window only, in a dock space that fills it between the
   main menu bar and the status bar. ImGui's windows of their own, outside the main window, are off:
   they work only under some of SDL's video drivers, and never on native Wayland.
-- **The default layout**: File (Quit), View (one toggle for each window), Keyboard (Lower and
-  Raise keyboard octave) and Help (About) in the main menu bar; the Instrument window docked on the left, at two thirds of the width, and the Audio
+- **The default layout**: File (Quit), Edit (Undo and Redo, each named after the step it would
+  take, as in "Undo Set Cutoff"), View (one toggle for each window), Keyboard (Lower and Raise
+  keyboard octave) and Help (About) in the main menu bar; the Instrument window docked on the left, at two thirds of the width, and the Audio
   window on the right; and the status bar along the bottom, with the keyboard octave between a −
-  and a + button, the voice count, the CPU meter, and a red CLIP for one second after the last
-  clipped sample. Studio builds the layout only when there is no saved one.
+  and a + button, the voice count, the CPU meter, a red CLIP for one second after the last
+  clipped sample, and why the latest edit was refused, until the next change. Studio builds the
+  layout only when there is no saved one.
 - **About** shows Studio's name, the release version, its licence, the repository, and a line
   naming `THIRD_PARTY_NOTICES.md`.
 - **HiDPI.** The window is created with SDL's high pixel density, and its sizes are logical pixels.
@@ -567,6 +569,69 @@ A key going up always reaches the note keys, so a held note key ends its note wh
 while it was held. Tests check the table itself: that every chord is one Studio allows, that no
 unmodified chord sits on a note key, and that no two shortcuts whose contexts overlap share a chord.
 
+### The Document and the undo history
+
+Studio owns its song as a **Document**, in `studio/src/doc/`, which includes no ImGui or audio
+header. It is built on standard containers and holds plain values, and every reference in it is a
+number or a position, never a pointer:
+
+- the metadata (title, author, comments), the timing (BPM from 20 to 999, LPB from 1 to 64, beats
+  per bar from 1 to 16, ticks per line from 1 to 32) and the seed;
+- from 1 to 64 tracks, each a name and its column counts, from 1 to 12 note columns and up to 8
+  effect columns, which every pattern shares;
+- patterns at fixed numbers from 000 to 999, each from 1 to 512 lines, with markers, one per line at
+  most, and for each track a block of its cells. A note column's cell is five bytes, note,
+  instrument, volume, pan and delay, in the engine's encoding, with `0xFF` for an empty field; an
+  effect column's cell is a command of two characters and a value byte, each of them or both
+  empty;
+- the sequence, from 1 to 1,000 slots each holding a pattern that exists, and sections, each a name
+  and the slot it starts on;
+- up to 64 song parameters, each a name and a range with a default;
+- instruments at fixed numbers from 01 to FE, each a name and one value for every parameter in
+  `irama::instrument_params`, in range and whole where stepped.
+
+Section and song parameter names are unique, not empty, and have no space at either end, since
+game code looks them up by name. Patterns and instruments keep their numbers: deleting one empties its
+number, and pattern data that names an empty instrument is left alone. Studio starts with the new
+song: no metadata, the default timing and seed, 4 tracks of one note column and one effect column,
+pattern 000 of 64 empty lines in one slot, and instrument 01 with every default.
+
+Every change to the Document is an **edit**, a function that writes it only through an
+`EditScope`. The scope copies each part the first time the edit writes it: the metadata, timing
+and seed; the track list; the sequence and sections; the song parameters; a whole pattern, when one
+comes or goes; a pattern's line count and markers; a pattern's block in one track; or an
+instrument. Undo swaps the copies back into the Document, and redo swaps them again, so no edit
+needs an undo of its own. An edit is all or nothing: if it refuses, or leaves a limit of the
+Document broken, every part it wrote is put back and nothing is recorded. A part written but left as
+it was keeps no copy, and an edit that changes nothing isn't recorded.
+
+Applying, undoing and redoing an edit each report the parts it changed in the EngineSong's terms:
+the song part, for anything but patterns and instruments; pattern N; instrument N; each once, in
+that order, with the position map of an edit that moves slots or tracks, turned around for undo.
+
+The **undo history**, `UndoHistory`, is linear: a new edit clears the steps undone. It keeps its
+steps within a budget given at construction, 64 MiB in Studio, counting each step's copies, their
+text and a fixed amount for each step, and drops the oldest steps to stay within it. A step larger
+than the whole budget is kept as the only one. Each step is one edit, except a continuous gesture,
+such as a slider dragged from press to release, whose edits merge into one step until it ends or
+another value is touched. Undo during a gesture first ends it. Each step keeps the pattern editor's
+view before and after it, for undo and redo to show, and an edit made anywhere else keeps none.
+
+`SongEditor`, in `app/`, holds the Document and its history. Views call its edits and never write
+the Document themselves. Ctrl+Z undoes, and Ctrl+Y and Ctrl+Shift+Z redo, as global shortcuts; a
+focused text field takes those keys first, for its own text. An edit that is refused leaves its
+reason for the status bar.
+
+After every edit, undo and redo, `AudioEngine` rebuilds each part reported from the Document. It
+keeps the song as last sent, part by part, and leaves out a rebuilt part equal to the one last sent
+for its entry, so an edit of the metadata, markers, sections, song parameters or names sends
+nothing. The rest replace their entries there and go to the player as one change set at frame 0,
+with the position map. A change set left empty isn't sent. Every new player, whether for another
+device, another buffer size, Reopen or a lost device, is given a copy of every part of the song as
+last sent, as one change set at frame 0 before its device starts, so a device change keeps every
+instrument value. With no device open, the song as last sent still changes, and the next player
+starts with it.
+
 ### The Instrument window
 
 The Instrument window shows every parameter in `irama::instrument_params`, built from the
@@ -587,17 +652,16 @@ Envelope (the 3000s), with any ID outside them under a last header, Other.
   place, which takes a number, with or without the unit's symbol, or a label in any case. Enter sets
   the value, constrained to the parameter, and Escape or a click elsewhere leaves it as it was.
 
-`AudioEngine` keeps Studio's own copy of the values, by ID, which starts from the defaults at every
-run, since the values are song data rather than settings. The window always shows the copy, and
-each change sets it and sends a change set of instrument 01 holding the whole copy at frame 0 at
-once, so a drag sends at most once a frame. A change set the player's queue refuses waits in the
-backlog. Every new player is given the whole song, the new song's song part and the copy as
-instrument 01, as one change set at frame 0 before its device starts, so it holds every value at
-its first frame. With no device open, a change only updates the copy.
+The window shows instrument 01 of the Document, and each change is an edit of it, named after the
+parameter, as in "Set Cutoff", which sends the instrument's part to the player at once, so a drag
+sends at most once a frame. A slider's drag, from press to release, is one step of the undo history,
+and a label chosen or a value typed is a step of its own. With instrument 01 empty, the window says
+so.
 
 `irama_studio_core` is laid out in folders, which are not targets of their own: `app/` (the loop,
-the window, the command line, the settings), `audio/` (the device, the engine, its meters and
-Studio's copy of the instrument's values), `input/` (the note keys, the shortcut table and the key router), `ui/` (the theme, the font, the
+the window, the command line, the settings, and the song with its history), `audio/` (the device,
+the engine, its meters and the song as last sent), `doc/` (the Document, its edits and the undo
+history), `input/` (the note keys, the shortcut table and the key router), `ui/` (the theme, the font, the
 values' text and helpers) and `views/` (what the window shows). `irama-studio` is `main.cpp` alone.
 Studio's tests are one Catch2 program, `irama_studio_tests` in `tests/studio/`, which tests what
 needs no window. One of its tests checks that SDL was built with its `wayland`, `x11` and
@@ -605,7 +669,18 @@ needs no window. One of its tests checks that SDL was built with its `wayland`, 
 out a driver whose development packages are missing. The play test opens the engine on miniaudio's Null backend, a device with no hardware that
 a timer drives on miniaudio's own thread, plays a chord through the note keys and lets the real
 callback render it: so the real-time guard and every sanitizer watch Studio's callback while it
-plays.
+plays. Another plays the chord while an edit, its undo and its redo change the instrument's gain.
+
+Test songs are built in code, from the new song, by a Document builder that reads cells written as
+the grid shows them, such as `C-4 01 40 .. 00` and `OFF .. .. .. 10`. One helper checks every kind
+of edit: it applies the edit, undoes and redoes it, and checks the Documents, the parts reported,
+and that the song as sent, updated by those parts, equals the song built from scratch from the
+Document. A seeded run of a few hundred random edits, undos and redos checks the same after every
+step, and undoes back to the song it started from; a failure names the seed and the step. The undo
+history's own tests use a budget of a few kilobytes. A headless test makes an ImGui context with no
+SDL window and no GPU, marks each texture request as done itself, and draws every window over a
+test song for a few frames, so ImGui's checks and every sanitizer watch the drawing code, under
+ThreadSanitizer too, where the smoke test doesn't run.
 
 `irama-studio --exit-after-frames <count>` quits after drawing that many frames. The smoke test,
 `cmake/smoke_test.cmake`, runs it for 300 frames, with `--config-dir` giving an empty directory in

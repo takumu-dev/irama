@@ -5,8 +5,10 @@
 // real callback on miniaudio's Null backend, a device driven by a timer on miniaudio's own thread.
 // So the real-time guard and every sanitizer watch Studio's callback while it plays.
 
+#include "app/song_editor.hpp"
 #include "audio/audio_device.hpp"
 #include "audio/audio_engine.hpp"
+#include "doc/edits.hpp"
 #include "input/note_keys.hpp"
 #include <irama/engine/voice/instrument.hpp>
 
@@ -26,6 +28,7 @@ using irama_studio::AudioBackend;
 using irama_studio::AudioEngine;
 using irama_studio::AudioGranted;
 using irama_studio::NoteKeys;
+using irama_studio::SongEditor;
 
 namespace {
 
@@ -62,6 +65,14 @@ void press_chord(NoteKeys& keys, AudioEngine& engine) {
             engine.send(*message);
         }
     }
+}
+
+// The peak the chord plays at, once a change has had time to glide through.
+[[nodiscard]] float settled_peak(AudioEngine& engine) {
+    REQUIRE(render_for(engine, 0.05));
+    static_cast<void>(engine.take_output_peak());
+    REQUIRE(render_for(engine, 0.1));
+    return engine.take_output_peak();
 }
 
 } // namespace
@@ -131,8 +142,10 @@ TEST_CASE("with no working backend the engine stays silent and says why", "[stud
     CHECK_FALSE(engine.last_error().empty());
 }
 
-TEST_CASE("a parameter changed while a device plays reaches its player at once", "[studio][play]") {
-    AudioEngine engine{null_backend};
+TEST_CASE("an edit, its undo and its redo reach the player at once while a device plays",
+          "[studio][play]") {
+    SongEditor editor;
+    AudioEngine engine{null_backend, editor.document()};
     REQUIRE(engine.open());
     NoteKeys keys;
     press_chord(keys, engine);
@@ -141,24 +154,36 @@ TEST_CASE("a parameter changed while a device plays reaches its player at once",
     REQUIRE(loud > 0.01F);
 
     // 60 dB below the default gain of -12 dB is far quieter, once the 20 ms glide has passed.
-    engine.set_parameter(irama::InstrumentParam::gain, -60.0F);
-    CHECK(engine.parameters().value(irama::InstrumentParam::gain) == -60.0F);
-    REQUIRE(render_for(engine, 0.05));
-    static_cast<void>(engine.take_output_peak());
-    REQUIRE(render_for(engine, 0.1));
-    const float quiet = engine.take_output_peak();
+    REQUIRE(editor.apply(
+        irama_studio::set_instrument_value(0x01, irama::InstrumentParam::gain, -60.0F), engine));
+    engine.flush();
+    const float quiet = settled_peak(engine);
     INFO("peak at the default gain " << loud << ", and at -60 dB " << quiet);
     CHECK(quiet > 0.0F);
     CHECK(quiet < loud / 100.0F);
+
+    static_cast<void>(editor.undo(engine));
+    engine.flush();
+    const float undone = settled_peak(engine);
+    INFO("peak after the undo " << undone);
+    CHECK(undone > loud / 2.0F);
+
+    static_cast<void>(editor.redo(engine));
+    engine.flush();
+    const float redone = settled_peak(engine);
+    INFO("peak after the redo " << redone);
+    CHECK(redone > 0.0F);
+    CHECK(redone < loud / 100.0F);
 }
 
-TEST_CASE("a parameter changed with no device open changes only the copy, and the next device's "
-          "player starts with it",
+TEST_CASE("an edit made with no device open reaches the next device's player, and a device change "
+          "keeps every instrument value",
           "[studio][play]") {
-    AudioEngine engine{null_backend};
-    engine.set_parameter(irama::InstrumentParam::gain, -60.0F);
+    SongEditor editor;
+    AudioEngine engine{null_backend, editor.document()};
+    REQUIRE(editor.apply(
+        irama_studio::set_instrument_value(0x01, irama::InstrumentParam::gain, -60.0F), engine));
     engine.flush();
-    CHECK(engine.parameters().value(irama::InstrumentParam::gain) == -60.0F);
 
     REQUIRE(engine.open());
     NoteKeys keys;

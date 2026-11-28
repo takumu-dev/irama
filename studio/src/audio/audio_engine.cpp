@@ -8,11 +8,13 @@
 #include "audio/device_choice.hpp"
 #include "audio/heartbeat_watch.hpp"
 #include "audio/message_backlog.hpp"
+#include "audio/sent_song.hpp"
+#include "doc/changed_parts.hpp"
+#include "doc/document.hpp"
 #include "input/note_message.hpp"
 #include <irama/engine/base/nonblocking.hpp>
 #include <irama/engine/base/render_scope.hpp>
 #include <irama/engine/model/change_set.hpp>
-#include <irama/engine/param/param_id.hpp>
 #include <irama/engine/player/player.hpp>
 
 #include <algorithm>
@@ -37,7 +39,7 @@ namespace {
 constexpr std::array<std::uint32_t, 4> player_rates{44'100, 48'000, 88'200, 96'000};
 constexpr std::uint32_t fallback_rate = 48'000;
 
-// Messages from the note keys and the Instrument window apply as soon as the player can: frame 0
+// Messages from the note keys and from edits apply as soon as the player can: frame 0
 // has always passed.
 constexpr std::uint64_t now_frame = 0;
 
@@ -51,7 +53,8 @@ void raise(std::atomic<float>& peak, float value) IRAMA_NONBLOCKING {
 
 } // namespace
 
-AudioEngine::AudioEngine(std::span<const AudioBackend> backends) : device_(backends) {}
+AudioEngine::AudioEngine(std::span<const AudioBackend> backends, const Document& song)
+    : device_(backends), sent_(song) {}
 
 AudioEngine::~AudioEngine() { close(); }
 
@@ -109,8 +112,8 @@ bool AudioEngine::open_choice(const DeviceChoice& choice) {
         }
     }
     const std::uint32_t sample_rate = granted_rate();
-    auto player =
-        create_player({.sample_rate = sample_rate, .max_voices = player_voices}, parameters_);
+    auto player = create_player({.sample_rate = sample_rate, .max_voices = player_voices},
+                                sent_.whole_song());
     if (!player) {
         device_.close();
         error_ = "Not enough memory for the player";
@@ -136,10 +139,10 @@ bool AudioEngine::is_open() const { return device_.is_open(); }
 
 void AudioEngine::send(const NoteMessage& message) { send_message(message); }
 
-void AudioEngine::set_parameter(irama::ParamId id, float value) {
-    parameters_.set(id, value);
-    if (player_) {
-        send_message(instrument_change(parameters_));
+void AudioEngine::send_changes(const Document& document, const ChangedParts& parts) {
+    irama::ChangeSetPtr changes = sent_.update(document, parts);
+    if (changes != nullptr) {
+        send_message(std::move(changes));
     }
 }
 

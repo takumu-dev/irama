@@ -19,6 +19,11 @@ namespace {
 
 constexpr std::array lower_octave_chords{Chord{.key = Key::keypad_divide}};
 constexpr std::array raise_octave_chords{Chord{.key = Key::keypad_multiply}};
+constexpr std::array undo_chords{Chord{.character = 'z', .modifiers = {.ctrl = true}}};
+constexpr std::array redo_chords{
+    Chord{.character = 'y', .modifiers = {.ctrl = true}},
+    Chord{.character = 'z', .modifiers = {.ctrl = true, .shift = true}},
+};
 
 constexpr std::array table{
     Shortcut{
@@ -32,6 +37,18 @@ constexpr std::array table{
         .name = "Raise keyboard octave",
         .context = ShortcutContext::global,
         .chords = raise_octave_chords,
+    },
+    Shortcut{
+        .id = ShortcutId::undo,
+        .name = "Undo",
+        .context = ShortcutContext::global,
+        .chords = undo_chords,
+    },
+    Shortcut{
+        .id = ShortcutId::redo,
+        .name = "Redo",
+        .context = ShortcutContext::global,
+        .chords = redo_chords,
     },
 };
 
