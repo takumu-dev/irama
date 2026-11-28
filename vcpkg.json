@@ -27,7 +27,10 @@
           "name": "sdl3",
           "default-features": false,
           "features": [
-            "vulkan",
+            {
+              "name": "vulkan",
+              "platform": "linux"
+            },
             {
               "name": "wayland",
               "platform": "linux"

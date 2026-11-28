@@ -51,7 +51,7 @@ cmake --workflow --preset gcc-debug
 |---|---|
 | `gcc-debug`, `gcc-release` | GCC |
 | `clang-debug`, `clang-release` | Clang with libstdc++ |
-| `msvc-debug`, `msvc-release` | MSVC, on Windows, without Studio |
+| `msvc-debug`, `msvc-release` | MSVC, on Windows |
 | `clang-asan` | Clang, debug, with AddressSanitizer and UndefinedBehaviorSanitizer |
 | `clang-tsan` | Clang, debug, with ThreadSanitizer |
 | `clang-rtsan` | Clang, debug, with RealtimeSanitizer |
@@ -65,24 +65,27 @@ settings, such as `VCPKG_ROOT` or a compiler under another name, belong in a
 
 Each part beside libirama has a switch, on by default, that also asks vcpkg for that part's
 dependencies: `IRAMA_BUILD_CLI`, `IRAMA_BUILD_STUDIO` and `IRAMA_BUILD_TESTS`. With every switch
-off, as in `gcc-libirama`, only libirama and its own dependencies are built. The `msvc-*` presets
-turn `IRAMA_BUILD_STUDIO` off, since Studio is built on Linux only. A project that adds Irama as a
-subproject gets the same, since the switches are off there by default.
+off, as in `gcc-libirama`, only libirama and its own dependencies are built. A project that adds
+Irama as a subproject gets the same, since the switches are off there by default. The `msvc-*`
+presets never look for clang-format or Doxygen, which they don't run, so an older one on the `PATH`,
+such as Visual Studio's own clang-format, can't stop them configuring.
 
 A build with Studio writes it to `build/<preset>/studio/irama-studio`. It starts with the
 Instrument and Audio windows docked side by side, and remembers its window and layout in
-`$XDG_CONFIG_HOME/irama/`, or `~/.config/irama/`. It takes two options: `--config-dir <directory>`
+`$XDG_CONFIG_HOME/irama/`, or `~/.config/irama/`, on Linux, and in `%APPDATA%\irama\` on Windows.
+It draws through Vulkan on Linux and Direct3D 12 on Windows. It takes two options: `--config-dir <directory>`
 keeps the settings in another directory, for a clean start, and `--exit-after-frames <count>`, for
 tests, quits after drawing that many frames.
 
-Studio plays through PulseAudio, which PipeWire serves too, or through ALSA where there is no
-PulseAudio server, and runs silent where neither works. The Audio window picks the device, the
+On Linux Studio plays through PulseAudio, which PipeWire serves too, or through ALSA where there is
+no PulseAudio server, and on Windows through WASAPI, in shared mode. It runs silent where none of
+them works. The Audio window picks the device, the
 system default unless another is chosen, and the buffer size, 256 frames unless another is chosen.
 A device that stops playing, such as a USB device unplugged, gives way to the system default, and
 where that fails too, the Audio window's Reopen button tries again. The computer
 keyboard is a piano of two rows: `Z` to `/` from C of the keyboard octave, and `Q` to `P` from the
 octave above, by the keys' positions on a US keyboard, so every layout plays the same. Numpad `/`
-and `*`, or the buttons in the status bar, lower and raise the octave, from 0 to 8, so that at the
+and `*`, the Keyboard menu, or the buttons in the status bar, lower and raise the octave, from 0 to 8, so that at the
 default of 4, `Z` plays C-4.
 
 `IRAMA_REALTIME_GUARD` compiles in the real-time guard, which stops the program when code inside a
@@ -94,13 +97,16 @@ and `tidy`.
 The tests run with each workflow preset, or alone with `ctest --preset <preset>`. Every test carries
 one CTest label: `abort`, for the checks that end the program, which run through
 `cmake/expect_abort.cmake`; `golden`, for the golden cases, which compare what irama-cli writes with
-a stored WAV file; `smoke`, for the test that starts Studio with no display, under SDL's `offscreen`
-video driver, and checks that it quits cleanly after 300 frames; or `unit`, for Catch2 test cases
-and the other checks run through CMake. Each test's name begins with what it tests: a libirama
-component such as `base` or `capi`, `cli` for irama-cli, `studio` for Studio, `golden` for a golden
-case, `golden harness` for the checks of the golden tests themselves, or `build` for the
-configuration itself. The `clang-tsan` test preset leaves out the `smoke` test, since SDL3 and the
-Vulkan driver aren't built with ThreadSanitizer.
+a stored WAV file; `smoke`, for the test that starts Studio, with no display under SDL's `offscreen`
+video driver on Linux and in a window of its own on Windows, and checks that it quits cleanly after
+300 frames; or `unit`, for Catch2 test cases and the other checks run through CMake. Each test's
+name begins with what it tests: a libirama component such as `base` or `capi`, `cli` for irama-cli,
+`studio` for Studio, `golden` for a golden case, `golden harness` for the checks of the golden tests
+themselves, or `build` for the configuration itself. The `clang-tsan` test preset leaves out the
+`smoke` test, since SDL3 and the Vulkan driver aren't built with ThreadSanitizer. Every test preset
+stops a test that runs for more than 5 minutes, and runs CTest without interactive debugging, so on
+Windows no error dialog waits for a click. For the same reason, each program's `main` sends the MSVC
+debug runtime's assertion and error reports to stderr.
 
 `IRAMA_UPDATE_GOLDENS=1 ctest --preset gcc-release -L golden` writes the goldens. Listen to each
 new or changed golden before committing it. [`CODING_STANDARDS.md`](CODING_STANDARDS.md) has the

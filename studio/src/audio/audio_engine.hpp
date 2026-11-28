@@ -25,8 +25,13 @@
 
 namespace irama_studio {
 
-/// The backends Studio plays through, in the order it tries them.
+/// The backends Studio plays through, in the order it tries them. WASAPI, in shared mode, exists on
+/// every Windows that Studio runs on.
+#ifdef _WIN32
+inline constexpr std::array studio_backends{AudioBackend::wasapi};
+#else
 inline constexpr std::array studio_backends{AudioBackend::pulseaudio, AudioBackend::alsa};
+#endif
 
 /// The number of voices Studio's player has.
 inline constexpr std::size_t player_voices = 32;

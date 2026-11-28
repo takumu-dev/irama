@@ -12,6 +12,7 @@ add_executable(irama_studio_tests
     instrument_layout_tests.cpp
     instrument_values_tests.cpp
     key_map_tests.cpp
+    key_router_tests.cpp
     message_backlog_tests.cpp
     meter_display_tests.cpp
     note_keys_tests.cpp
@@ -19,6 +20,8 @@ add_executable(irama_studio_tests
     param_text_tests.cpp
     play_tests.cpp
     settings_tests.cpp
+    shortcut_actions_tests.cpp
+    shortcut_table_tests.cpp
     video_drivers_tests.cpp
 )
 target_link_libraries(irama_studio_tests PRIVATE irama_studio_core irama_catch_main)
@@ -28,7 +31,7 @@ catch_discover_tests(irama_studio_tests
     PROPERTIES LABELS unit
 )
 
-set(irama_smoke_test "studio: starts with no display, draws 300 frames and quits cleanly")
+set(irama_smoke_test "studio: starts, draws 300 frames and quits cleanly")
 add_test(NAME "${irama_smoke_test}"
     COMMAND "${CMAKE_COMMAND}"
         "-DPROGRAM=$<TARGET_FILE:irama-studio>"

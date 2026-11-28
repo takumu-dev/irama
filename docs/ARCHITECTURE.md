@@ -394,7 +394,10 @@ part of libirama.
 
 Studio opens one window, `Irama Studio`, 1280×800 logical pixels the first time it opens and
 resizable, and draws [Dear ImGui](https://github.com/ocornut/imgui) in it through SDL3's GPU API,
-SDL_GPU, which on Linux runs on Vulkan. So running Studio on Linux needs a Vulkan driver.
+SDL_GPU, which runs on Vulkan on Linux and on Direct3D 12 on Windows. So running Studio on Linux
+needs a Vulkan driver. Studio offers SDL_GPU its shaders as SPIR-V, DXIL, DXBC and Metallib; ImGui's
+Direct3D 12 shaders are DXBC. On Windows Studio is a console program, so stderr and SDL's log behave
+as on Linux.
 
 - **The loop.** Studio has its own `main()` and a plain loop: handle SDL's events, draw a frame, and
   present it with vsync, so it redraws every vsync while the window can be seen. While the window is
@@ -403,8 +406,8 @@ SDL_GPU, which on Linux runs on Vulkan. So running Studio on Linux needs a Vulka
 - **Docking.** Windows dock inside the main window only, in a dock space that fills it between the
   main menu bar and the status bar. ImGui's windows of their own, outside the main window, are off:
   they work only under some of SDL's video drivers, and never on native Wayland.
-- **The default layout**: File (Quit), View (one toggle for each window) and Help (About) in the
-  main menu bar; the Instrument window docked on the left, at two thirds of the width, and the Audio
+- **The default layout**: File (Quit), View (one toggle for each window), Keyboard (Lower and
+  Raise keyboard octave) and Help (About) in the main menu bar; the Instrument window docked on the left, at two thirds of the width, and the Audio
   window on the right; and the status bar along the bottom, with the keyboard octave between a −
   and a + button, the voice count, the CPU meter, and a red CLIP for one second after the last
   clipped sample. Studio builds the layout only when there is no saved one.
@@ -419,10 +422,11 @@ SDL_GPU, which on Linux runs on Vulkan. So running Studio on Linux needs a Vulka
   the TTF into a generated source as a byte array, with `cmake/embed_file.cmake`, and ImGui loads it
   from memory, so there is no font file to find beside the executable. The colours are ImGui's own
   dark style.
-- **Settings.** Studio keeps two files in its settings directory: `$XDG_CONFIG_HOME/irama/`, or
-  `~/.config/irama/` where `XDG_CONFIG_HOME` isn't set or isn't an absolute path, or the directory
-  that `--config-dir <directory>` gives. With neither variable set and no option, Studio keeps
-  nothing.
+- **Settings.** Studio keeps two files in its settings directory. On Linux that is
+  `$XDG_CONFIG_HOME/irama/`, or `~/.config/irama/` where `XDG_CONFIG_HOME` isn't set or isn't an
+  absolute path. On Windows it is `irama` in the Roaming application data folder, read from
+  `APPDATA`. On either, `--config-dir <directory>` gives another. With none of those variables set
+  and no option, Studio keeps nothing.
   - `studio.ini` holds `key = value` lines, which Studio reads and writes itself: `window_width`
     and `window_height`, the window's size when it isn't maximised, in logical pixels (at least
     640×400, the window's minimum); `window_maximised` (`true` or `false`); and `font_size`, the UI
@@ -440,8 +444,10 @@ SDL_GPU, which on Linux runs on Vulkan. So running Studio on Linux needs a Vulka
     changed since. Each write goes to a temporary file beside it, then renames that over it, so the
     file always holds a whole version. A file that can't be written is reported on stderr, and
     Studio carries on.
-- **Start-up failure.** If SDL's video, the window or the GPU device fails, Studio shows SDL's
-  error in a message box, prints it to stderr, and exits with status 1.
+- **Start-up failure.** If a step of start-up fails, such as SDL's video, the window, the GPU
+  device or claiming the window for it, Studio prints the step and SDL's error, or "SDL gave no
+  reason" where SDL has none, to stderr, shows the same in a message box, and exits with status 1.
+  Under `--exit-after-frames` there is no message box, which would wait for a click in a test.
 
 ### Sound and the note keys
 
@@ -464,9 +470,9 @@ Studio plays through two layers in `studio/src/audio/`:
   implementation compiles in Studio's own `miniaudio.cpp`, with each preset's flags, so the
   sanitizers instrument its threads too.
 - **`AudioEngine`** holds the device and, only while it is open, an `irama::Player` with 32 voices
-  at the device's rate. Studio's backends are PulseAudio, then ALSA. It opens a device at the
-  device's own rate, and if that isn't one of the player's, 44.1, 48, 88.2 or 96 kHz, opens it
-  again at 48 kHz for the backend to convert. Each callback has exactly the buffer size's frames,
+  at the device's rate. Studio's backends are PulseAudio, then ALSA, on Linux, and WASAPI alone, in
+  shared mode, on Windows. It opens a device at the device's own rate, and if that isn't one of the
+  player's, 44.1, 48, 88.2 or 96 kHz, opens it again at 48 kHz for the backend to convert. Each callback has exactly the buffer size's frames,
   and miniaudio's own clipping is off. With no backend or device working, Studio runs silent, and
   the Audio window says why.
 
@@ -501,16 +507,17 @@ SDL's scancodes are, so the piano rows are the same keys on every keyboard layou
 octave O, the lower row `Z S X D C V G B H N J M` plays C to B of O and `, L . ; /` C to E of O+1,
 and the upper row `Q 2 W 3 E R 5 T 6 Y 7 U` plays C to B of O+1 and `I 9 O 0 P` C to E of O+2, as
 a US keyboard labels the keys. The octave runs from 0 to 8, 4 by default, so `Z` plays C-4, and a
-key whose note would pass B-9 plays nothing. Numpad `/` lowers it and Numpad `*` raises it.
+key whose note would pass B-9 plays nothing. Numpad `/` lowers it and Numpad `*` raises it, as
+shortcuts.
 
 - Every note key plays at velocity 1, and key repeats are ignored.
 - A key's note is remembered when it goes down, so a key released after an octave change ends the
   note it started. The keys play instrument 01. A note-off releases every voice on its note and
   instrument, so the held keys are counted for each note, and only the release of the last key
   holding a note sends its note-off.
-- A key going down plays nothing while ImGui takes typed text, or while Ctrl, Alt or Super is held.
-  A key going up always ends its note. When the window loses focus, Studio sends release-all and
-  forgets the held keys.
+- A key going down plays nothing while ImGui takes typed text, while it runs a shortcut, or while
+  Ctrl, Alt or Super is held. A key going up always ends its note. When the window loses focus,
+  Studio sends release-all and forgets the held keys.
 - Studio's messages name frame 0, so each applies at the start of the player's next render call.
   A message the player's queue refuses, a change set among them, waits in a backlog on the UI
   thread, and the backlog is sent first, in order, before any new message and again each frame.
@@ -522,6 +529,43 @@ So Studio runs three kinds of thread: the UI thread, which handles events, draws
 call on the device, the engine and the player's control functions; the device's thread, miniaudio's
 own, which runs the callback; and the backend's threads, such as PulseAudio's, which Studio never
 touches.
+
+### Shortcuts and the key router
+
+Every Studio key that runs a named function is a shortcut, an entry in one table in
+`studio/src/input/shortcut_table.cpp`. An entry holds an ID, the name the menus show, a context and
+one or more chords. The menus show each entry's chords from the table, and choosing an entry runs the
+same function as its chords, through `run_shortcut()`. Like the note keys, the table includes no
+SDL or ImGui header.
+
+- **Chords.** A chord is a named key, or the character a key types in the current layout, with
+  Ctrl, Alt and Shift, each meaning either side's key. A named key is one whose place and meaning
+  are the same on every layout, such as Space, the arrows, the F-keys and the numpad, and is its USB
+  HID usage ID. A character is matched in the current layout, so Ctrl+Z is on whichever key types
+  Z, while the note keys stay where they are: SDL gives the key's character with no modifier, and
+  gives a layout with no Latin letters the US layout's. Super is in no chord.
+- **Contexts.** A global shortcut works whichever window has focus. A Pattern or Sequence shortcut
+  works only while that window has focus. Shortcuts whose contexts overlap, a global one with any
+  other or two in one context, never share a chord.
+- **Unmodified chords.** Plain letters, digits and punctuation belong to the note keys and to
+  entry, so a chord with no modifier may use only Space, Enter, Esc, Tab, the arrows, Page Up and
+  Page Down, Home and End, Insert, Delete and Backspace, the F-keys, the numpad, Scroll Lock and the
+  lone modifiers. No unmodified chord sits on a note key or a character the note keys type.
+- **Lone modifiers.** Right Ctrl and Right Alt may each be a chord alone, the only chords that name
+  a side. Such a shortcut runs when the key goes up, and only if no other key was held when it went
+  down and no other key or mouse button went down while it was held. So Right Ctrl+Z is Ctrl+Z
+  alone, and Right Alt works as a lone key on layouts where it is AltGr.
+
+One router, `KeyRouter`, sends each key where it belongs, and the first rule that applies wins:
+
+1. While a text field has focus (ImGui's `WantTextInput`), it takes every key.
+2. A key that matches a chord of a shortcut in force runs that shortcut. A held key's repeats run
+   nothing.
+3. Otherwise the key goes to the note keys.
+
+A key going up always reaches the note keys, so a held note key ends its note whatever was pressed
+while it was held. Tests check the table itself: that every chord is one Studio allows, that no
+unmodified chord sits on a note key, and that no two shortcuts whose contexts overlap share a chord.
 
 ### The Instrument window
 
@@ -553,32 +597,35 @@ its first frame. With no device open, a change only updates the copy.
 
 `irama_studio_core` is laid out in folders, which are not targets of their own: `app/` (the loop,
 the window, the command line, the settings), `audio/` (the device, the engine, its meters and
-Studio's copy of the instrument's values), `input/` (the note keys), `ui/` (the theme, the font, the
+Studio's copy of the instrument's values), `input/` (the note keys, the shortcut table and the key router), `ui/` (the theme, the font, the
 values' text and helpers) and `views/` (what the window shows). `irama-studio` is `main.cpp` alone.
 Studio's tests are one Catch2 program, `irama_studio_tests` in `tests/studio/`, which tests what
 needs no window. One of its tests checks that SDL was built with its `wayland`, `x11` and
-`offscreen` video drivers, since SDL quietly leaves out a driver whose development packages are
-missing. The play test opens the engine on miniaudio's Null backend, a device with no hardware that
+`offscreen` video drivers on Linux, and its `windows` driver on Windows, since SDL quietly leaves
+out a driver whose development packages are missing. The play test opens the engine on miniaudio's Null backend, a device with no hardware that
 a timer drives on miniaudio's own thread, plays a chord through the note keys and lets the real
 callback render it: so the real-time guard and every sanitizer watch Studio's callback while it
 plays.
 
 `irama-studio --exit-after-frames <count>` quits after drawing that many frames. The smoke test,
-`cmake/smoke_test.cmake`, runs it for 300 frames under SDL's `offscreen` video driver, with no
-display, and with `--config-dir` giving an empty directory in the build tree, so it never reads or
-changes the user's settings. It passes only if Studio exits with status 0, writes nothing to
-stderr, and leaves `studio.ini` and `imgui.ini` in that directory. It passes whether or not a
-sound device opens, since Studio runs silent without one, as it does in CI, which has no sound
-server. SDL_GPU draws on the machine's
-own Vulkan driver, and on lavapipe, Mesa's Vulkan driver on the CPU, in CI. The test carries the
-`smoke` label, and runs in every test preset that builds Studio but `clang-tsan`: SDL3 and the
-Vulkan driver aren't built with ThreadSanitizer, so their threads would give false reports.
+`cmake/smoke_test.cmake`, runs it for 300 frames, with `--config-dir` giving an empty directory in
+the build tree, so it never reads or changes the user's settings. On Linux it runs under SDL's
+`offscreen` video driver, with no display, and SDL_GPU draws on the machine's own Vulkan driver, and
+on lavapipe, Mesa's Vulkan driver on the CPU, in CI. On Windows the `offscreen` driver's windows
+have nothing Direct3D 12 can present to, so Studio opens a real window under SDL's `windows` driver,
+drawn by WARP, Direct3D 12 on the CPU, in CI. It passes only if Studio exits with status 0, writes
+nothing to stderr, and leaves `studio.ini` and `imgui.ini` in that directory. It passes whether or
+not a sound device opens, since Studio runs silent without one, as it does in CI, which has no sound
+device. The test carries the `smoke` label, and runs in every test preset that builds Studio but
+`clang-tsan`: SDL3 and the Vulkan driver aren't built with ThreadSanitizer, so their threads would
+give false reports.
 
 ## Dependencies
 
 Every dependency comes from `vcpkg.json`. libirama's are its top-level dependencies, and each other
-part's are a manifest feature. Studio's are SDL3, with its default features off and `vulkan`, plus
-`wayland` and `x11` on Linux; Dear ImGui's docking branch, with its SDL3 and SDL_GPU backends;
+part's are a manifest feature. Studio's are SDL3, with its default features off and `vulkan`,
+`wayland` and `x11` on Linux, where Vulkan is SDL_GPU's only driver, while on Windows SDL_GPU's
+Direct3D 12 driver needs no feature; Dear ImGui's docking branch, with its SDL3 and SDL_GPU backends;
 miniaudio; and Inter. The overlay ports in `ports/`, which `vcpkg-configuration.json` puts ahead of vcpkg's own,
 stand in for ports that vcpkg lacks or that don't yet do what Irama needs:
 
@@ -638,7 +685,7 @@ The tests check that all of these agree.
 | `.clang-format`, `.clang-tidy`, `Doxyfile` | The settings of those checks. |
 | `cmake/expect_abort.cmake` | Runs a program that must abort, and checks its report. |
 | `cmake/golden_test.cmake` | Runs a golden case, or writes its golden. |
-| `cmake/smoke_test.cmake` | Starts Studio headless and checks that it quits cleanly. |
+| `cmake/smoke_test.cmake` | Starts Studio, headless on Linux and in a window on Windows, and checks that it quits cleanly. |
 | `cmake/embed_file.cmake` | Writes a file's bytes into a C++ source, for Studio's font. |
 | `studio/` | Irama Studio: `irama_studio_core`, `irama-studio`, and the `.clang-tidy` that lets ImGui's printf-style functions through. |
 | `tests/` | The tests, one folder per component under `unit/`, the programs that must abort under `abort/`, the golden cases and the compare tool under `golden/`, Studio's tests under `studio/`, `irama_test_support` under `support/`, and the CLI and configuration checks. |

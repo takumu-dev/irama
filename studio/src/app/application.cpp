@@ -6,10 +6,12 @@
 #include "app/config_files.hpp"
 #include "app/options.hpp"
 #include "app/settings.hpp"
+#include "app/shortcut_actions.hpp"
 #include "audio/audio_engine.hpp"
 #include "audio/meter_display.hpp"
+#include "input/key_router.hpp"
 #include "input/note_keys.hpp"
-#include "input/note_message.hpp"
+#include "input/shortcut_table.hpp"
 #include "ui/flags.hpp"
 #include "ui/fonts.hpp"
 #include "ui/theme.hpp"
@@ -22,6 +24,7 @@
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_gpu.h>
 #include <SDL3/SDL_init.h>
+#include <SDL3/SDL_keyboard.h>
 #include <SDL3/SDL_keycode.h>
 #include <SDL3/SDL_messagebox.h>
 #include <SDL3/SDL_pixels.h>
@@ -74,12 +77,17 @@ template <std::invocable Function> class [[nodiscard]] Deferred {
     Function function_;
 };
 
-// Reports why Studio can't start, with SDL's error, both on stderr and in a message box, since a
-// user who started Studio from a desktop sees no stderr. Returns the exit status to end with.
-[[nodiscard]] int fail(std::string_view what) {
-    const std::string message = std::format("{}: {}", what, SDL_GetError());
+// Reports why Studio can't start: the step that failed, then SDL's error. It goes to stderr, and
+// also to a message box, since a user who started Studio from a desktop sees no stderr, but not
+// under a test, where nobody would close the box. Returns the exit status to end with.
+[[nodiscard]] int fail(const Options& options, std::string_view step) {
+    const std::string_view why = SDL_GetError();
+    const std::string message =
+        std::format("{}: {}", step, why.empty() ? "SDL gave no reason" : why);
     std::println(stderr, "irama-studio: {}", message);
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title, message.c_str(), nullptr);
+    if (!options.exit_after_frames) {
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title, message.c_str(), nullptr);
+    }
     return exit_failure;
 }
 
@@ -190,31 +198,43 @@ class SettingsFiles {
     std::optional<DelayedFile> layout_file_;
 };
 
-// Whether a key going down may play a note or step the octave: not while ImGui takes typed text,
-// and not with Ctrl, Alt or Super held, which make the key a shortcut.
-[[nodiscard]] bool may_play(const SDL_KeyboardEvent& key) {
-    constexpr SDL_Keymod shortcut_modifiers = SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI;
-    return !ImGui::GetIO().WantTextInput && (key.mod & shortcut_modifiers) == 0;
+// The key event as the key router reads it. SDL's scancodes are USB HID usage IDs, which the note
+// keys and named keys are. The character comes from the key's keycode in the current layout with
+// no modifier held, where a keycode for a key that types a character is that character, and SDL
+// gives a layout with no Latin letters the US layout's.
+[[nodiscard]] KeyEvent key_event(const SDL_KeyboardEvent& key) {
+    const SDL_Keycode keycode = SDL_GetKeyFromScancode(key.scancode, SDL_KMOD_NONE, true);
+    return {
+        .key = static_cast<int>(key.scancode),
+        .character = (keycode & SDLK_SCANCODE_MASK) == 0 ? char32_t{keycode} : 0,
+        .modifiers =
+            {
+                .ctrl = (key.mod & SDL_KMOD_CTRL) != 0,
+                .alt = (key.mod & SDL_KMOD_ALT) != 0,
+                .shift = (key.mod & SDL_KMOD_SHIFT) != 0,
+            },
+        .super = (key.mod & SDL_KMOD_GUI) != 0,
+        .down = key.down,
+        .repeat = key.repeat,
+    };
 }
 
-// Plays a key going down or up on the note keys. SDL's scancodes are USB HID usage IDs, which the
-// note keys read. A key going up always ends the note it started.
-void handle_key(const SDL_KeyboardEvent& key, NoteKeys& keys, AudioEngine& engine) {
-    const int usage = static_cast<int>(key.scancode);
-    std::optional<NoteMessage> message;
-    if (!key.down) {
-        message = keys.release(usage);
-    } else if (may_play(key)) {
-        message = keys.press(usage, key.repeat);
+// Routes a key going down or up: runs its shortcut, or sends its note message. A text field takes
+// the key while ImGui takes typed text.
+void handle_key(const SDL_KeyboardEvent& key, KeyRouter& router, AudioEngine& engine) {
+    const KeyFocus focus{.text_field = ImGui::GetIO().WantTextInput};
+    const RoutedKey routed = router.route(key_event(key), focus);
+    if (routed.shortcut) {
+        run_shortcut(*routed.shortcut, router.note_keys());
     }
-    if (message) {
-        engine.send(*message);
+    if (routed.note) {
+        engine.send(*routed.note);
     }
 }
 
 // Handles the events waiting in SDL's queue, and returns false once the user has asked to quit.
 [[nodiscard]] bool handle_events(SDL_Window* window, float font_size, Settings& settings,
-                                 SettingsFiles& files, NoteKeys& keys, AudioEngine& engine) {
+                                 SettingsFiles& files, KeyRouter& router, AudioEngine& engine) {
     bool keep_running = true;
     SDL_Event event{};
     while (SDL_PollEvent(&event)) {
@@ -224,10 +244,12 @@ void handle_key(const SDL_KeyboardEvent& key, NoteKeys& keys, AudioEngine& engin
         if (event.type == SDL_EVENT_QUIT || closed) {
             keep_running = false;
         } else if (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) {
-            handle_key(event.key, keys, engine);
+            handle_key(event.key, router, engine);
+        } else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+            router.pointer_pressed();
         } else if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
             // The keys still held will go up where Studio can't see them.
-            engine.send(keys.release_all());
+            engine.send(router.release_all());
         } else if (event.type == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED) {
             apply_theme(content_scale(window), font_size);
         } else if (event.type == SDL_EVENT_WINDOW_RESIZED ||
@@ -289,7 +311,7 @@ void render(SDL_GPUDevice* device, SDL_Window* window) {
 int run(const Options& options) {
     SDL_SetAppMetadata(title, IRAMA_VERSION_STRING, nullptr);
     if (!SDL_Init(SDL_INIT_VIDEO)) {
-        return fail("Couldn't start SDL's video");
+        return fail(options, "Couldn't start SDL's video");
     }
     const Deferred quit_sdl{[] { SDL_Quit(); }};
 
@@ -306,21 +328,26 @@ int run(const Options& options) {
         SDL_CreateWindow(title, to_display(settings.window_width, scale),
                          to_display(settings.window_height, scale), window_flags);
     if (window == nullptr) {
-        return fail("Couldn't open the window");
+        return fail(options, "Couldn't open the window");
     }
     const Deferred destroy_window{[window] { SDL_DestroyWindow(window); }};
     SDL_SetWindowMinimumSize(window, to_display(min_window_width, scale),
                              to_display(min_window_height, scale));
 
-    SDL_GPUDevice* const device = SDL_CreateGPUDevice(
-        SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_METALLIB,
-        false, nullptr);
+    // ImGui's shaders for Direct3D 12 are DXBC, which SDL's Direct3D 12 driver always takes.
+    SDL_GPUDevice* const device =
+        SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL |
+                                SDL_GPU_SHADERFORMAT_DXBC | SDL_GPU_SHADERFORMAT_METALLIB,
+                            false, nullptr);
     if (device == nullptr) {
-        return fail("Couldn't create the GPU device");
+        return fail(options, "Couldn't create the GPU device");
     }
     const Deferred destroy_device{[device] { SDL_DestroyGPUDevice(device); }};
+    // Direct3D 12 sets no error of its own when it can't make the window's swapchain, so an
+    // earlier step's error mustn't stand in for it.
+    SDL_ClearError();
     if (!SDL_ClaimWindowForGPUDevice(device, window)) {
-        return fail("Couldn't draw in the window with the GPU device");
+        return fail(options, "Couldn't claim the window for the GPU device");
     }
     const Deferred release_window{[device, window] {
         SDL_WaitForGPUIdle(device);
@@ -328,7 +355,7 @@ int run(const Options& options) {
     }};
     if (!SDL_SetGPUSwapchainParameters(device, window, SDL_GPU_SWAPCHAINCOMPOSITION_SDR,
                                        SDL_GPU_PRESENTMODE_VSYNC)) {
-        return fail("Couldn't present with vsync");
+        return fail(options, "Couldn't present with vsync");
     }
     SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
     SDL_ShowWindow(window);
@@ -353,7 +380,7 @@ int run(const Options& options) {
     load_fonts(font_size);
 
     if (!ImGui_ImplSDL3_InitForSDLGPU(window)) {
-        return fail("Couldn't start ImGui's SDL backend");
+        return fail(options, "Couldn't start ImGui's SDL backend");
     }
     const Deferred shut_down_platform{[] { ImGui_ImplSDL3_Shutdown(); }};
     ImGui_ImplSDLGPU3_InitInfo renderer{};
@@ -361,7 +388,7 @@ int run(const Options& options) {
     renderer.ColorTargetFormat = SDL_GetGPUSwapchainTextureFormat(device, window);
     renderer.MSAASamples = SDL_GPU_SAMPLECOUNT_1;
     if (!ImGui_ImplSDLGPU3_Init(&renderer)) {
-        return fail("Couldn't start ImGui's SDL_GPU backend");
+        return fail(options, "Couldn't start ImGui's SDL_GPU backend");
     }
     const Deferred shut_down_renderer{[device] {
         SDL_WaitForGPUIdle(device);
@@ -371,7 +398,8 @@ int run(const Options& options) {
     // With no device, Studio runs silent, and the Audio window says why.
     AudioEngine engine{studio_backends};
     static_cast<void>(engine.open(settings.audio_device, settings.buffer_size));
-    NoteKeys keys{settings.octave};
+    KeyRouter router{shortcut_table(), settings.octave};
+    NoteKeys& keys = router.note_keys();
     MeterDisplay meters;
 
     Workspace workspace;
@@ -385,7 +413,7 @@ int run(const Options& options) {
         if ((SDL_GetWindowFlags(window) & hidden) != 0) {
             SDL_WaitEventTimeout(nullptr, hidden_wait_ms);
         }
-        if (!handle_events(window, font_size, settings, files, keys, engine)) {
+        if (!handle_events(window, font_size, settings, files, router, engine)) {
             running = false;
         }
         engine.flush();
@@ -405,6 +433,9 @@ int run(const Options& options) {
         }
         ImGui::Render();
         render(device, window);
+        if (const std::optional chosen = workspace.chosen_shortcut()) {
+            run_shortcut(*chosen, keys);
+        }
 
         const DelayedFile::Clock::time_point now = DelayedFile::Clock::now();
         update_audio(workspace.audio_window(), settings, files, keys, engine, now);

@@ -3,7 +3,6 @@
 
 #pragma once
 
-#include <cstdint>
 #include <optional>
 
 namespace irama_studio {
@@ -29,17 +28,8 @@ inline constexpr int default_octave = 4;
 /// \return The note, or none for a key off the piano rows or one whose note would pass B-9.
 [[nodiscard]] std::optional<int> note_for_key(int key, int octave);
 
-/// What a key does to the keyboard octave.
-enum class OctaveKey : std::uint8_t {
-    /// Nothing.
-    none,
-    /// Lowers it by one: numpad `/`.
-    lower,
-    /// Raises it by one: numpad `*`.
-    raise,
-};
-
-/// What the key with the USB HID usage ID `key` does to the keyboard octave.
-[[nodiscard]] OctaveKey octave_key(int key);
+/// Whether `character` is one that a note key types on a US keyboard, in either case: the
+/// characters a shortcut's chord must never use on its own.
+[[nodiscard]] bool is_note_key_character(char32_t character);
 
 } // namespace irama_studio

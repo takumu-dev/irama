@@ -132,25 +132,13 @@ TEST_CASE("forgetting the held keys sends nothing for them", "[studio][keys]") {
     CHECK(keys.press(key_z, pressed) == note_on(48));
 }
 
-TEST_CASE("numpad / and * step the keyboard octave from 0 to 8", "[studio][keys]") {
+TEST_CASE("numpad / and * play nothing and leave the keyboard octave alone", "[studio][keys]") {
     NoteKeys keys;
-    CHECK(keys.octave() == 4);
     CHECK(keys.press(key_keypad_multiply, pressed) == std::nullopt);
-    CHECK(keys.octave() == 5);
     CHECK(keys.release(key_keypad_multiply) == std::nullopt);
     CHECK(keys.press(key_keypad_divide, pressed) == std::nullopt);
-    CHECK(keys.press(key_keypad_divide, pressed) == std::nullopt);
-    CHECK(keys.octave() == 3);
-    // A held octave key steps once.
-    CHECK(keys.press(key_keypad_divide, repeated) == std::nullopt);
-    CHECK(keys.octave() == 3);
-
-    keys.set_octave(0);
-    REQUIRE(keys.press(key_keypad_divide, pressed) == std::nullopt);
-    CHECK(keys.octave() == 0);
-    keys.set_octave(8);
-    REQUIRE(keys.press(key_keypad_multiply, pressed) == std::nullopt);
-    CHECK(keys.octave() == 8);
+    CHECK(keys.release(key_keypad_divide) == std::nullopt);
+    CHECK(keys.octave() == 4);
 }
 
 TEST_CASE("the keyboard octave is kept from 0 to 8", "[studio][keys]") {
